@@ -23,6 +23,7 @@ import (
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/config"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/events"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/monitor"
+	"github.com/fructus-sum/APC-UPS-Bridge/internal/notify"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/power"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/web"
 )
@@ -44,6 +45,8 @@ func run() int {
 	settingsFile := flag.String("settings-file", "/etc/apc-ups-bridge/settings.json", "editable settings file")
 	powerConfigFile := flag.String("power-config", "/etc/apc-ups-bridge/power.json", "approved remote devices and power rules")
 	powerStateFile := flag.String("power-state", "/var/lib/apc-ups-bridge/power-state.json", "durable power-action state (must persist across reboot)")
+	emailConfigPath := flag.String("email-config", "/var/lib/apc-ups-bridge/email.json", "SMTP account credentials file")
+	emailStatePath := flag.String("email-state", "/var/lib/apc-ups-bridge/email-state.json", "persistent email incident and report state")
 	setPassword := flag.Bool("set-password-stdin", false, "initialize/reset admin password from standard input, then exit")
 	flag.Parse()
 	if *showVersion {
@@ -75,7 +78,7 @@ func run() int {
 	logger := log.New(os.Stderr, "apc-ups-bridge: ", log.LstdFlags|log.LUTC)
 	defaults := config.Settings{PollIntervalSeconds: int((*interval) / time.Second), LowBatteryPercent: *low, RetentionDays: *retention}
 	apply := make(chan config.Settings, 1)
-	notify := func(s config.Settings) {
+	settingsChanged := func(s config.Settings) {
 		select {
 		case apply <- s:
 		default:
@@ -88,7 +91,7 @@ func run() int {
 			}
 		}
 	}
-	settings, err := config.Open(*settingsFile, defaults, notify)
+	settings, err := config.Open(*settingsFile, defaults, settingsChanged)
 	if err != nil {
 		logger.Print(err)
 		return 2
@@ -101,6 +104,17 @@ func run() int {
 		return 2
 	}
 	clean := func(days int) {
+		// Preserve event logs while an incident report is still pending.
+		if b, readErr := os.ReadFile(*emailStatePath); readErr == nil {
+			var pending struct {
+				Current json.RawMessage `json:"current"`
+			}
+			if json.Unmarshal(b, &pending) != nil || (len(pending.Current) > 0 && string(pending.Current) != "null") {
+				return
+			}
+		} else if readErr != nil && !os.IsNotExist(readErr) {
+			return
+		}
 		if n, e := events.Cleanup(*logDir, days, time.Now()); e != nil {
 			logger.Printf("event cleanup: %v", e)
 		} else if n > 0 {
@@ -137,7 +151,20 @@ func run() int {
 		logger.Printf("power automation state (fail closed): %v", err)
 		return 2
 	}
+	mailStore, err := notify.OpenConfig(*emailConfigPath)
+	if err != nil {
+		logger.Printf("mail configuration: %v", err)
+		return 2
+	}
+	mailEngine, err := notify.Open(mailStore, *emailStatePath, *logDir, events.FileWriter{Dir: *logDir}, notify.SMTPSender{})
+	if err != nil {
+		logger.Printf("mail state: %v", err)
+		return 2
+	}
 	handler, err := web.New(mon, admin, settings, *logDir, powerController)
+	if err == nil {
+		web.AttachEmail(handler, mailEngine)
+	}
 	if err != nil {
 		logger.Print(err)
 		return 2
@@ -164,6 +191,8 @@ func run() int {
 		defer done()
 		_ = server.Shutdown(timeoutCtx)
 	}()
+	emailUpdates := make(chan notify.Sample, 64)
+	go mailEngine.Run(ctx, emailUpdates, func(err error) { logger.Printf("email report state: %v", err) })
 	lastPollError := false
 	lastPowerError := false
 	poll := func() {
@@ -188,6 +217,18 @@ func run() int {
 			logger.Print("power automation operating normally")
 		}
 		lastPowerError = automationErr != nil
+		pcfg := powerStore.Get()
+		var targets []notify.Target
+		for _, d := range pcfg.Devices {
+			if d.ShutdownEnabled {
+				targets = append(targets, notify.Target{ID: d.ID, Name: d.Name, Host: d.Host, Port: d.SSHPort})
+			}
+		}
+		select {
+		case emailUpdates <- notify.Sample{UPS: status, Targets: targets}:
+		default:
+			logger.Print("email worker backed up; newest UPS notification sample dropped")
+		}
 	}
 	poll()
 	tick := time.NewTicker(time.Duration(current.PollIntervalSeconds) * time.Second)
