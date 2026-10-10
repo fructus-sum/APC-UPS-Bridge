@@ -19,8 +19,8 @@ import (
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/auth"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/config"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/events"
-	"github.com/fructus-sum/APC-UPS-Bridge/internal/firmware"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/monitor"
+	"github.com/fructus-sum/APC-UPS-Bridge/internal/notify"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/power"
 )
 
@@ -33,6 +33,7 @@ type Handler struct {
 	Config  *config.Store
 	Logs    string
 	Power   *power.Controller
+	Mail    *notify.Engine
 }
 type viewData struct {
 	Page    string
@@ -74,6 +75,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	if h.emailRoutes(w, r, csrf) {
+		return
+	}
 	switch r.URL.Path {
 	case "/", "/events", "/settings", "/power":
 		if r.Method != http.MethodGet {
@@ -104,14 +108,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		respondJSON(w, h.Monitor.Snapshot())
-	case "/api/firmware":
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", 405)
-			return
-		}
-		status := h.Monitor.Snapshot()
-		// Do not show stale readings as a current firmware result.
-		respondJSON(w, firmware.Check(status.Current))
 	case "/api/events", "/api/events.csv", "/api/report":
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", 405)
