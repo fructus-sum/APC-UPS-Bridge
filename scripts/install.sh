@@ -27,7 +27,8 @@ usage() {
 Install or upgrade APC UPS Bridge from a checksum-verified GitHub release.
 Usage: sudo bash scripts/install.sh [options]
   --version v1.0.0        Install this release (default: latest)
-  --listen HOST:PORT      Web binding; default 127.0.0.1:8080 (LAN requires explicit opt-in)
+  --listen HOST:PORT      Web binding; overrides the installer prompt (LAN requires explicit opt-in)
+                          Interactive first install asks for a port [8080], bound to 127.0.0.1
   --configure-apcupsd     Back up and configure apcupsd for a local USB UPS
   --host-protection       With --configure-apcupsd, set apcupsd native shutdown at
                           10% battery or 3 minutes remaining (NOT app shutdown)
@@ -209,6 +210,20 @@ UNIT
   mv -f "$tmp" "${UNIT_DIR}/${SERVICE}"
   systemctl daemon-reload
 }
+choose_listen_port() {
+  # Existing installations keep the saved binding unless --listen was given.
+  # Unattended installs retain 127.0.0.1:8080 without prompting.
+  if [[ "$LISTEN_PROVIDED" == true || "$NONINTERACTIVE" == true || ! -t 0 || -f "$CONFIG_DIR/service.env" ]]; then
+    return
+  fi
+  local port
+  read -r -p 'Web interface port [8080]: ' port
+  port=${port:-8080}
+  [[ "$port" =~ ^[1-9][0-9]{0,4}$ ]] || die 'Invalid web port: enter a number from 1 to 65535'
+  (( 10#$port <= 65535 )) || die 'Web port must be 1–65535'
+  LISTEN="127.0.0.1:$port"
+  validate_listen "$LISTEN" || die 'Invalid selected web port'
+}
 set_listen_config() {
   local file="$CONFIG_DIR/service.env" current
   if [[ -f "$file" && "$LISTEN_PROVIDED" != true ]]; then
@@ -279,6 +294,7 @@ main() {
   # Existing UPS daemon configuration remains untouched unless explicitly requested.
   if [[ "$SETUP_APC" == true ]]; then configure_apcupsd; fi
   ensure_user
+  choose_listen_port
   set_listen_config
   if [[ ! -f "$STATE_DIR/auth.json" ]]; then
     read_initial_password "${stage}/${APP}"
