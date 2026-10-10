@@ -190,3 +190,15 @@ func hasFlag(flags []string, name string) bool {
 	}
 	return false
 }
+
+// SetLowBatteryThreshold changes the event warning threshold without restarting.
+// It does not enable or perform any power-management actions.
+func (m *Monitor) SetLowBatteryThreshold(value float64) error {
+	if value < 0 || value > 100 {
+		return fmt.Errorf("low battery threshold must be 0..100")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.lowAt = value
+	return nil
+}

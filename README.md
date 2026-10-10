@@ -1,32 +1,59 @@
 # APC UPS Bridge
 
-**Give older USB-connected APC UPS units a new life on the network.**
+**Give your older USB-connected APC UPS a new life on the network.**
 
-APC UPS Bridge is a lightweight, self-hosted gateway for monitoring and protecting equipment powered by legacy APC USB uninterruptible power supplies. A Raspberry Pi or another Linux computer will connect to the UPS over USB and make status available across the local network.
+APC UPS Bridge turns a Raspberry Pi or Linux host into a lightweight, self-hosted gateway for USB APC UPS units supported by `apcupsd`. It provides a password-protected dashboard, live readings, event-only logs and reports, and editable monitoring preferences. It uses **one Go executable, no database, no cloud service, and no third-party Go modules**.
 
-> **Development status: Phase 2 monitoring core implemented for review, not a production release.** There is no web dashboard, installer, or working remote shutdown/recovery yet. Do not rely on this version to protect equipment.
+> **Development preview (Phase 3), not a production release.** Automated shutdown and Wake-on-LAN are **not implemented**, and an automated installer/systemd service has not yet been created. This preview must not be relied upon to protect equipment.
 
-## Design goals
+## Features available in Phase 3
 
-- APC USB UPS support through `apcupsd` / `apcaccess` first.
-- One lightweight application, minimal dependencies, no database and no cloud services.
-- Live web dashboard and password-protected administration (planned).
-- Configurable remote shutdown and Wake-on-LAN recovery (planned, disabled until tested).
-- Event-only logs with adjustable retention, including unlimited.
-- Autostart, secure installation, and Raspberry Pi/Linux support (planned).
+- Live mains/battery state, charge, runtime, load, voltage, UPS model and communication health when reported by the UPS.
+- Password-protected dashboard, events/reports and settings; administrator login and password rotation.
+- Security controls: salted PBKDF2-SHA256 password hashing, ephemeral authenticated sessions, login attempt limits, and CSRF tokens on updates.
+- Event-only monthly JSONL logs, adjustable retention including unlimited; CSV download for recent events.
+- Editable polling interval (5–3600 s), low battery **warning** level (0–100%), and event retention (0–36500 days). Changes are applied without restarting.
+- All web routes share one configurable HTTP port. Default bind address is `127.0.0.1:8080` to avoid exposing the administrator password over the network unintentionally.
 
-## Phase 2 monitoring core
+## Quick start (development/testing)
 
-Go 1.22+ is needed to compile, but the compiled executable has no extra Go runtime dependency. An independently configured `apcupsd` and `apcaccess` remain necessary.
+Prerequisites: Go 1.22+ for building, an APC USB UPS configured with `apcupsd`, and `apcaccess` available in PATH. The compiled executable does not require Go. On a minimal Linux/Raspberry Pi, `apcupsd` handles USB communication and may need its separate NIS listener restricted to localhost.
 
-```sh
+```bash
 go test ./...
 go build -o apc-ups-bridge ./cmd/apc-ups-bridge
-./apc-ups-bridge --once --log-dir ./test-events
+
+mkdir -p ./data
+read -rs -p 'Choose a long administrator password: ' UPS_BRIDGE_PASS; echo
+printf '%s\n' "$UPS_BRIDGE_PASS" | ./apc-ups-bridge --auth-file ./data/auth.json --set-password-stdin
+unset UPS_BRIDGE_PASS
+
+./apc-ups-bridge \
+  --auth-file ./data/auth.json \
+  --settings-file ./data/settings.json \
+  --log-dir ./data/events \
+  --listen 127.0.0.1:8080
 ```
 
-For more details, flags, and logging behaviour see [Phase 2 usage](docs/PHASE-2.md) and the [Architecture proposal](docs/ARCHITECTURE.md).
+Open `http://127.0.0.1:8080/` on the host and sign in as `admin`. To check a UPS without starting the web listener:
 
-## Security
+```bash
+./apc-ups-bridge --once --settings-file ./data/settings.json --log-dir ./data/events
+```
 
-No remotely accessible web service is running in Phase 2. Once a web interface is added, authentication will be required for administration and internet exposure will not be recommended. This project is independent and not affiliated with or endorsed by APC or Schneider Electric.
+### Access from your private LAN
+
+Explicitly set `--listen 0.0.0.0:8080` and access `http://<host-ip>:8080` from another device. **Plain HTTP does not encrypt passwords or sessions.** Do not forward the port to the public internet. Use a trusted VPN or an HTTPS reverse proxy for remote administration, and limit network access at the firewall. Changing the listening port currently requires restarting the program.
+
+`--set-password-stdin` resets an administrator password and overwrites its local password hash; restart a running web process after a CLI reset. Saving preferences from the authenticated settings page updates the settings file immediately. Password hashes, settings files, and event logs should be accessible only to the service account.
+
+For more information see [Phase 3 usage and tests](docs/PHASE-3.md), [Phase 2 internals](docs/PHASE-2.md) and [Architecture](docs/ARCHITECTURE.md).
+
+## Roadmap
+
+1. ~~Read-only UPS polling, fault detection and event-only logging.~~
+2. ~~Authenticated single-port dashboard, events, reports and basic editable settings.~~
+3. Add thoroughly tested power management: remote SSH shutdown, safe Wake-on-LAN recovery and local protection.
+4. Provide versioned GitHub releases, checksums, an idempotent installer, automatic startup, and compatibility validation.
+
+APC is a trademark of its respective owner. This independent project is not affiliated with or endorsed by APC or Schneider Electric.

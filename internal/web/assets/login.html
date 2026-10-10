@@ -1,0 +1,5 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sign in · APC UPS Bridge</title><link rel="stylesheet" href="/assets/app.css"></head>
+<body class="login-page"><main class="login-card"><div class="brand-mark">⚡</div><h1>APC UPS Bridge</h1><p class="muted">Your USB-connected APC UPS, available on your network.</p>
+{{if .Error}}<p role="alert" class="message error">{{.Error}}</p>{{end}}{{if .Success}}<p role="status" class="message success">{{.Success}}</p>{{end}}
+<form method="post" action="/login"><label for="username">Username</label><input id="username" name="username" value="admin" required autocomplete="username"><label for="password">Password</label><input id="password" name="password" type="password" required autocomplete="current-password"><button type="submit">Sign in</button></form>
+<p class="muted tiny">For private networks. Use HTTPS or a trusted VPN when accessing remotely.</p></main></body></html>
