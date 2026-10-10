@@ -19,7 +19,7 @@ function makeTimeline(root,events) {
   const dot=document.createElement('span');dot.className='dot' + (e.level==='warning'?' warning':'');
   const info=document.createElement('div');const title=document.createElement('div');title.className='event-name';title.textContent=e.type.replaceAll('_',' ');
   const desc=document.createElement('div');desc.className='event-detail';
-  const details=e.details||{};desc.textContent=[details.status,typeof details.battery_percent==='number'?details.battery_percent+'% battery':'',details.reason||''].filter(Boolean).join(' · ');
+  const details=e.details||{};desc.textContent=[details.device,details.status,typeof details.battery_percent==='number'?details.battery_percent+'% battery':'',details.reason||''].filter(Boolean).join(' · ');
   info.append(title,desc);const when=document.createElement('time');when.className='event-time';when.textContent=dateText(e.time);item.append(dot,info,when);root.append(item);
  }
 }
@@ -65,6 +65,57 @@ async function startSettings(){
   }catch(e){feedback.textContent='Could not save: '+e.message;}
  });
 }
-if(page==='/'){refreshDashboard();refreshRecent();setInterval(refreshDashboard,10000);setInterval(refreshRecent,60000);}
+async function refreshPowerState(){
+ try {const v=await getJSON('/api/power/state');
+ const text=v.enabled ? (v.active ? 'Active: '+v.phase.replaceAll('_',' ') : (v.armed?'Armed · waiting for outage':'Enabled · not yet armed')) : 'Disabled · remote actions off';
+ if(el('automation-state'))el('automation-state').textContent=text;
+ if(el('power-state')){el('power-state').textContent=text;el('power-state').className='state '+(v.active?'warn':v.enabled?'ok':'');}
+ if(el('power-summary')){const actions=Object.entries(v.actions||{}).map(([id,a])=>id+': shutdown '+(a.shutdown_accepted?'accepted':a.shutdown_attempted?'attempted':'not attempted')+', wake '+(a.wake_sent?'sent':a.wake_attempted?'attempted':'not attempted'));
+ el('power-summary').textContent=text+(actions.length?' · '+actions.join(' | '):'');}
+ }catch(e){if(el('automation-state'))el('automation-state').textContent='Automation status unavailable';}
+}
+function powerField(parent,label,key,value,type='text'){
+ const wrapper=document.createElement('label');wrapper.className=type==='checkbox'?'checkline':'device-field';
+ const input=document.createElement('input');input.dataset.key=key;input.type=type;
+ if(type==='checkbox')input.checked=!!value;else input.value=value??'';
+ if(type==='number')input.step=key==='priority'||key.includes('port')?'1':'any';
+ if(key==='id'||key==='name'||key==='host'||key==='ssh_user')input.required=true;
+ const name=document.createElement('span');name.textContent=label;
+ wrapper.append(name,input);parent.append(wrapper);
+ return input;
+}
+function addDevice(data={}){
+ const root=el('device-list');const section=document.createElement('section');section.className='device';
+ const top=document.createElement('div');top.className='device-top';const title=document.createElement('strong');title.textContent=data.name||'New device';
+ const remove=document.createElement('button');remove.type='button';remove.textContent='Remove';remove.className='secondary';remove.addEventListener('click',()=>section.remove());top.append(title,remove);section.append(top);
+ const fields=document.createElement('div');fields.className='device-fields';section.append(fields);
+ const spec=[['Device ID','id','text',data.id||'node-'+Math.random().toString(36).slice(2,8)],['Friendly name','name','text',data.name||''],['IP or hostname','host','text',data.host||''],['SSH user','ssh_user','text',data.ssh_user||'root'],['SSH port','ssh_port','number',data.ssh_port??22],['Shutdown priority','priority','number',data.priority??0],['MAC address','mac','text',data.mac||''],['Wake destination IP','wake_address','text',data.wake_address||'255.255.255.255'],['Wake UDP port','wake_port','number',data.wake_port??9],['Use sudo -n','use_sudo','checkbox',data.use_sudo||false],['Allow automatic shutdown','shutdown_enabled','checkbox',data.shutdown_enabled||false],['Allow wake after shutdown','wake_enabled','checkbox',data.wake_enabled||false]];
+ for(const [label,key,type,val] of spec)powerField(fields,label,key,val,type);
+ root.append(section);
+}
+function collectDevices(){return Array.from(el('device-list').querySelectorAll('.device')).map(section=>{
+ const d={};for(const input of section.querySelectorAll('[data-key]'))d[input.dataset.key]=input.type==='checkbox'?input.checked:input.type==='number'?Number(input.value):input.value.trim();return d;
+});}
+async function startPower(){
+ const feedback=el('power-feedback');
+ try{const v=await getJSON('/api/power');
+ el('power-enabled').checked=v.enabled;el('shutdown-percent').value=v.shutdown_battery_percent;el('shutdown-runtime').value=v.shutdown_runtime_minutes;
+ el('outage-delay').value=v.on_battery_delay_seconds;el('recovery-percent').value=v.recovery_battery_percent;el('recovery-delay').value=v.recovery_stable_seconds;
+ for(const d of v.devices||[])addDevice(d);
+ }catch(e){feedback.textContent='Could not load power configuration.';return;}
+ el('add-device').addEventListener('click',()=>addDevice());
+ el('power-form').addEventListener('submit',async ev=>{
+ ev.preventDefault();feedback.textContent='Validating…';
+ const v={enabled:el('power-enabled').checked,shutdown_battery_percent:Number(el('shutdown-percent').value),shutdown_runtime_minutes:Number(el('shutdown-runtime').value),on_battery_delay_seconds:Number(el('outage-delay').value),recovery_battery_percent:Number(el('recovery-percent').value),recovery_stable_seconds:Number(el('recovery-delay').value),devices:collectDevices()};
+ if(v.enabled&&!window.confirm('Enable automated SSH shutdown for approved devices when the UPS crosses the configured threshold?')){feedback.textContent='Not saved.';return;}
+ try{const res=await fetch('/api/power',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},credentials:'same-origin',body:JSON.stringify(v)});
+ if(!res.ok)throw new Error((await res.text()).trim());feedback.textContent='Power configuration saved.';refreshPowerState();
+ }catch(e){feedback.textContent='Could not save: '+e.message;}
+ });
+ refreshPowerState();setInterval(refreshPowerState,10000);
+}
+if(page==='/'){refreshDashboard();refreshRecent();refreshPowerState();setInterval(refreshPowerState,10000);setInterval(refreshDashboard,10000);setInterval(refreshRecent,60000);}
 if(page==='/events'){refreshEvents();el('range').addEventListener('change',refreshEvents);el('refresh-events').addEventListener('click',refreshEvents);}
 if(page==='/settings') startSettings();
+
+if(page==='/power')startPower();
