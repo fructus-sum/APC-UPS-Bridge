@@ -21,6 +21,7 @@ import (
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/events"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/firmware"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/monitor"
+	"github.com/fructus-sum/APC-UPS-Bridge/internal/power"
 )
 
 //go:embed assets/*
@@ -31,6 +32,7 @@ type Handler struct {
 	Auth    *auth.Store
 	Config  *config.Store
 	Logs    string
+	Power   *power.Controller
 }
 type viewData struct {
 	Page    string
@@ -73,7 +75,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch r.URL.Path {
-	case "/", "/events", "/settings":
+	case "/", "/events", "/settings", "/power":
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", 405)
 			return
@@ -175,6 +177,50 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		respondJSON(w, h.Config.Get())
+	case "/api/power":
+		if h.Power == nil {
+			http.Error(w, "power automation unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if r.Method == http.MethodGet {
+			respondJSON(w, h.PowerConfig())
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", 405)
+			return
+		}
+		if !csrfValid(r, csrf) {
+			http.Error(w, "invalid CSRF token", 403)
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 32768)
+		var value power.Config
+		decoder := json.NewDecoder(r.Body)
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&value); err != nil {
+			http.Error(w, "invalid power rules", 400)
+			return
+		}
+		if err := decoder.Decode(&struct{}{}); err != io.EOF {
+			http.Error(w, "unexpected extra data", 400)
+			return
+		}
+		if err := h.Power.UpdateConfig(value); err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		respondJSON(w, h.PowerConfig())
+	case "/api/power/state":
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", 405)
+			return
+		}
+		if h.Power == nil {
+			http.Error(w, "power automation unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		respondJSON(w, h.Power.View())
 	case "/change-password":
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", 405)
@@ -290,10 +336,16 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
+func (h *Handler) PowerConfig() power.Config { return h.Power.Config() }
+
 // New creates a handler with no listener and no background goroutines.
-func New(mon *monitor.Monitor, a *auth.Store, c *config.Store, logs string) (http.Handler, error) {
+func New(mon *monitor.Monitor, a *auth.Store, c *config.Store, logs string, powers ...*power.Controller) (http.Handler, error) {
 	if mon == nil || a == nil || c == nil {
 		return nil, fmt.Errorf("monitor, authentication and settings are required")
 	}
-	return &Handler{Monitor: mon, Auth: a, Config: c, Logs: logs}, nil
+	h := &Handler{Monitor: mon, Auth: a, Config: c, Logs: logs}
+	if len(powers) > 0 {
+		h.Power = powers[0]
+	}
+	return h, nil
 }

@@ -1,5 +1,5 @@
-// APC UPS Bridge Phase 3: protected web status, monitoring and event reports.
-// Shutdown and Wake-on-LAN are intentionally not implemented in this release.
+// APC UPS Bridge Phase 4: protected web monitoring and opt-in, fail-closed
+// remote power automation. Local host shutdown is intentionally excluded.
 package main
 
 import (
@@ -23,6 +23,7 @@ import (
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/config"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/events"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/monitor"
+	"github.com/fructus-sum/APC-UPS-Bridge/internal/power"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/web"
 )
 
@@ -38,6 +39,8 @@ func run() int {
 	listen := flag.String("listen", "127.0.0.1:8080", "web listening address (LAN opt-in: 0.0.0.0:8080)")
 	authFile := flag.String("auth-file", "/var/lib/apc-ups-bridge/auth.json", "password hash file")
 	settingsFile := flag.String("settings-file", "/etc/apc-ups-bridge/settings.json", "editable settings file")
+	powerConfigFile := flag.String("power-config", "/etc/apc-ups-bridge/power.json", "approved remote devices and power rules")
+	powerStateFile := flag.String("power-state", "/var/lib/apc-ups-bridge/power-state.json", "durable power-action state (must persist across reboot)")
 	setPassword := flag.Bool("set-password-stdin", false, "initialize/reset admin password from standard input, then exit")
 	flag.Parse()
 	if *setPassword {
@@ -117,7 +120,17 @@ func run() int {
 		logger.Printf("cannot start web server: %v; configure with --set-password-stdin", err)
 		return 2
 	}
-	handler, err := web.New(mon, admin, settings, *logDir)
+	powerStore, err := power.OpenConfig(*powerConfigFile)
+	if err != nil {
+		logger.Printf("power automation config (fail closed): %v", err)
+		return 2
+	}
+	powerController, err := power.OpenController(powerStore, *powerStateFile, events.FileWriter{Dir: *logDir}, power.LinuxExecutor{})
+	if err != nil {
+		logger.Printf("power automation state (fail closed): %v", err)
+		return 2
+	}
+	handler, err := web.New(mon, admin, settings, *logDir, powerController)
 	if err != nil {
 		logger.Print(err)
 		return 2
@@ -145,6 +158,7 @@ func run() int {
 		_ = server.Shutdown(timeoutCtx)
 	}()
 	lastPollError := false
+	lastPowerError := false
 	poll := func() {
 		err := mon.Poll(ctx)
 		if err != nil && ctx.Err() == nil && !lastPollError {
@@ -154,6 +168,19 @@ func run() int {
 			logger.Print("UPS polling restored")
 		}
 		lastPollError = err != nil
+		status := mon.Snapshot()
+		if err != nil {
+			status.Healthy = false
+			status.Current = nil
+		}
+		automationErr := powerController.Observe(ctx, status)
+		if automationErr != nil && ctx.Err() == nil && !lastPowerError {
+			logger.Printf("power automation error (repeats suppressed): %v", automationErr)
+		}
+		if automationErr == nil && lastPowerError {
+			logger.Print("power automation operating normally")
+		}
+		lastPowerError = automationErr != nil
 	}
 	poll()
 	tick := time.NewTicker(time.Duration(current.PollIntervalSeconds) * time.Second)

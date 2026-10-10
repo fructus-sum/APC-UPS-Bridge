@@ -2,3 +2,7 @@
 
 /* Shown only for a confirmed, model/UPS-ID-specific firmware update. */
 .firmware-warning:not([hidden]){border:1px solid #d9aa52;border-left:5px solid #b57923;background:#fff8e8}.firmware-warning h2{color:#795015}.firmware-warning[hidden]{display:none}
+/* Phase 4 power configuration */
+.checkline{display:flex;align-items:center;gap:10px;font-weight:600}.checkline input{width:18px;height:18px;flex:none}.devices-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:24px}.device-list{display:grid;gap:16px}.device{border:1px solid #dce6ed;background:#f8fafc;border-radius:12px;padding:16px}.device-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}.device-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.device-field{display:grid;gap:5px;font-size:.83rem}.device .checkline{font-size:.83rem}.device .secondary{width:auto;padding:8px 12px}@media(max-width:680px){.device-fields{grid-template-columns:1fr}}
+
+#power-form{max-width:840px}
