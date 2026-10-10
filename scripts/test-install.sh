@@ -42,11 +42,11 @@ set_listen_config
 grep -q '^APC_LISTEN=127.0.0.1:8888$' "$CONFIG_DIR/service.env"
 rm "$CONFIG_DIR/service.env"
 LISTEN=127.0.0.1:8080
-printf '\n' | prompt_listen_port
+prompt_listen_port <<< ''
 [[ "$LISTEN" == "127.0.0.1:8080" ]]
-printf '9090\n' | prompt_listen_port
+prompt_listen_port <<< '9090'
 [[ "$LISTEN" == "127.0.0.1:9090" ]]
-if (printf '65536\n' | prompt_listen_port) >/dev/null 2>&1; then
+if (prompt_listen_port <<< '65536') >/dev/null 2>&1; then
   echo 'Invalid interactive port accepted' >&2; exit 1
 fi
 printf 'binary\n' > "$stage/apc-ups-bridge"
