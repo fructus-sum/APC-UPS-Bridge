@@ -27,8 +27,11 @@ import (
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/web"
 )
 
+var version = "development" // overridden by -ldflags at release build time
+
 func main() { os.Exit(run()) }
 func run() int {
+	showVersion := flag.Bool("version", false, "print application version and exit")
 	command := flag.String("apcaccess", "apcaccess", "apcaccess executable (PATH or absolute path)")
 	interval := flag.Duration("interval", 10*time.Second, "initial UPS poll interval, overridden by saved web settings")
 	timeout := flag.Duration("timeout", 4*time.Second, "apcaccess command timeout")
@@ -43,6 +46,10 @@ func run() int {
 	powerStateFile := flag.String("power-state", "/var/lib/apc-ups-bridge/power-state.json", "durable power-action state (must persist across reboot)")
 	setPassword := flag.Bool("set-password-stdin", false, "initialize/reset admin password from standard input, then exit")
 	flag.Parse()
+	if *showVersion {
+		fmt.Println("APC UPS Bridge", version)
+		return 0
+	}
 	if *setPassword {
 		b, err := io.ReadAll(io.LimitReader(os.Stdin, 1024))
 		if err != nil {
