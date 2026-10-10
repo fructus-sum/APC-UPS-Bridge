@@ -1,0 +1,34 @@
+[Unit]
+Description=APC UPS Bridge (USB APC UPS network monitoring)
+Documentation=https://github.com/fructus-sum/APC-UPS-Bridge
+Wants=network-online.target
+After=network-online.target apcupsd.service
+
+[Service]
+Type=simple
+User=apc-ups-bridge
+Group=apc-ups-bridge
+WorkingDirectory=/var/lib/apc-ups-bridge
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+EnvironmentFile=/etc/apc-ups-bridge/service.env
+ExecStart=/usr/local/bin/apc-ups-bridge --listen ${APC_LISTEN}
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=20s
+UMask=0077
+NoNewPrivileges=true
+CapabilityBoundingSet=
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+RestrictSUIDSGID=true
+LockPersonality=true
+SystemCallArchitectures=native
+ReadWritePaths=/etc/apc-ups-bridge /var/lib/apc-ups-bridge /var/log/apc-ups-bridge
+
+[Install]
+WantedBy=multi-user.target
