@@ -4,13 +4,13 @@
 
 APC UPS Bridge turns a Raspberry Pi or Linux host into a lightweight, self-hosted gateway for USB APC UPS units supported by `apcupsd`. It provides a password-protected dashboard, live readings, event-only logs and reports, editable monitoring preferences, and **opt-in** remote power protection. It uses **one Go executable, no database, no cloud service, and no third-party Go modules**.
 
-> **Development preview (Phase 4), not a production release.** Remote SSH shutdown and Wake-on-LAN are implemented behind an explicit disabled-by-default safety switch, but have **not been tested on real UPS hardware**. Automatic local host shutdown and an installer/systemd service are not yet included. Do not rely on this preview to protect equipment.
+> **Development preview (Phase 5), not a production release.** Remote SSH shutdown and Wake-on-LAN are implemented behind an explicit disabled-by-default safety switch, but have **not been tested on real UPS hardware**. An installer and systemd unit are implemented but have not been tested across target Linux devices. Local host shutdown is handled by apcupsd rather than a competing application shutdown loop. Do not rely on this preview to protect equipment.
 
-## Features available through Phase 4
+## Features available through Phase 5
 
 - Live mains/battery state, charge, runtime, load, voltage, UPS model and communication health when reported by the UPS.
+- Read-only firmware advisory in the dashboard for recognized devices (manual vendor update only; never flashes USB firmware). See [firmware guidance](docs/FIRMWARE.md).
 - Password-protected dashboard, events/reports and settings; administrator login and password rotation.
-- Conservative firmware version advisory on the web dashboard for recognized, reference-matched UPS devices (manual update guidance only). See [firmware checker](docs/FIRMWARE.md).
 - Security controls: salted PBKDF2-SHA256 password hashing, ephemeral authenticated sessions, login attempt limits, and CSRF tokens on updates.
 - Event-only monthly JSONL logs, adjustable retention including unlimited; CSV download for recent events.
 - Editable polling interval (5–3600 s), low battery **warning** level (0–100%), and event retention (0–36500 days). Changes are applied without restarting.
@@ -20,6 +20,18 @@ APC UPS Bridge turns a Raspberry Pi or Linux host into a lightweight, self-hoste
 - Shutdown requires a previously healthy ONLINE observation, ON_BATTERY confirmation delay and a configured battery, UPS LOWBATT, or runtime trigger.
 - Recovery requires stable, healthy ONLINE power and adequate battery charge; devices only wake if their shutdown SSH command reported success.
 - Durable, tiny JSON power-action state prevents repeated remote actions after restarts. No periodic normal-status log writes.
+
+## Install from GitHub releases (after a release is published)
+
+The lightweight GitHub release installer downloads an architecture-matched Linux binary, verifies its checksum, checks for `apcupsd`, installs one restricted systemd service and retains credentials/settings on upgrade. See the [installation, recovery, and Raspberry Pi self-protection guide](docs/INSTALL.md) **before running it**.
+
+```bash
+curl -fL https://raw.githubusercontent.com/fructus-sum/APC-UPS-Bridge/main/scripts/install.sh -o install.sh
+less install.sh
+sudo bash install.sh
+```
+
+**No versioned binary release has been published by this code change.** Publishing an actual tag/release and testing on real hardware are required first. The installer does not replace existing apcupsd configuration without `--configure-apcupsd` and remote shutdown remains opt-in. The app binds only to localhost by default.
 
 ## Quick start (development/testing)
 
@@ -62,6 +74,6 @@ For remote power configuration and safety limitations see [Phase 4 safety and te
 1. ~~Read-only UPS polling, fault detection and event-only logging.~~
 2. ~~Authenticated single-port dashboard, events, reports and basic editable settings.~~
 3. ~~Implement opt-in remote SSH shutdown and guarded Wake-on-LAN recovery with durable safety state.~~
-4. Add local UPS-host protection coordination, versioned GitHub releases, checksums, an idempotent installer, automatic startup and real-hardware compatibility validation.
+4. ~~Implement apcupsd-based optional local-host protection setup, checksummed GitHub release build, an idempotent installer and automatic startup.~~ Hardware/OS compatibility testing and publication of a reviewed release are still required.
 
 APC is a trademark of its respective owner. This independent project is not affiliated with or endorsed by APC or Schneider Electric.
