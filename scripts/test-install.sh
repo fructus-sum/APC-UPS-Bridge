@@ -18,6 +18,37 @@ done
 for bind in 'foo:8080' '192.168.1.999:8080' '0.0.0.0:0' '0.0.0.0:65536' '0.0.0.0:88;whoami' '127.0.0.1:08'; do
   if validate_listen "$bind"; then echo "Bad bind accepted: $bind" >&2; exit 1; fi
 done
+# Prompt validation and non-interactive/upgrade preservation.
+for port in 1 8080 9090 65535; do validate_web_port "$port"; done
+for port in 0 65536 08 -1 abc '80;id' ' 8080' ''; do
+  if validate_web_port "$port"; then echo "Bad port accepted: $port" >&2; exit 1; fi
+done
+LISTEN=127.0.0.1:8080
+LISTEN_PROVIDED=false
+NONINTERACTIVE=true
+CONFIG_DIR="$stage/config"
+mkdir -p "$CONFIG_DIR"
+choose_listen_port
+[[ "$LISTEN" == "127.0.0.1:8080" ]]
+LISTEN=127.0.0.1:9090
+LISTEN_PROVIDED=true
+choose_listen_port
+[[ "$LISTEN" == "127.0.0.1:9090" ]]
+LISTEN_PROVIDED=false
+printf 'APC_LISTEN=127.0.0.1:8888\n' > "$CONFIG_DIR/service.env"
+choose_listen_port
+set_listen_config
+[[ "$LISTEN" == "127.0.0.1:8888" ]]
+grep -q '^APC_LISTEN=127.0.0.1:8888$' "$CONFIG_DIR/service.env"
+rm "$CONFIG_DIR/service.env"
+LISTEN=127.0.0.1:8080
+prompt_listen_port <<< ''
+[[ "$LISTEN" == "127.0.0.1:8080" ]]
+prompt_listen_port <<< '9090'
+[[ "$LISTEN" == "127.0.0.1:9090" ]]
+if (prompt_listen_port <<< '65536') >/dev/null 2>&1; then
+  echo 'Invalid interactive port accepted' >&2; exit 1
+fi
 printf 'binary\n' > "$stage/apc-ups-bridge"
 tar -C "$stage" -czf "$stage/test.tar.gz" apc-ups-bridge
 (cd "$stage" && sha256sum test.tar.gz > SHA256SUMS)

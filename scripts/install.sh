@@ -27,7 +27,8 @@ usage() {
 Install or upgrade APC UPS Bridge from a checksum-verified GitHub release.
 Usage: sudo bash scripts/install.sh [options]
   --version v1.0.0        Install this release (default: latest)
-  --listen HOST:PORT      Web binding; default 127.0.0.1:8080 (LAN requires explicit opt-in)
+  --listen HOST:PORT      Web binding; overrides the installer prompt (LAN requires explicit opt-in)
+                          Interactive first install asks for a port [8080], bound to 127.0.0.1
   --configure-apcupsd     Back up and configure apcupsd for a local USB UPS
   --host-protection       With --configure-apcupsd, set apcupsd native shutdown at
                           10% battery or 3 minutes remaining (NOT app shutdown)
@@ -209,6 +210,27 @@ UNIT
   mv -f "$tmp" "${UNIT_DIR}/${SERVICE}"
   systemctl daemon-reload
 }
+validate_web_port() {
+  local port="$1"
+  [[ "$port" =~ ^[1-9][0-9]{0,4}$ ]] || return 1
+  (( 10#$port >= 1 && 10#$port <= 65535 ))
+}
+prompt_listen_port() {
+  local port
+  IFS= read -r -p 'Web interface port [8080]: ' port || die 'Could not read web interface port'
+  port=${port:-8080}
+  validate_web_port "$port" || die 'Invalid web port: enter a number from 1 to 65535'
+  LISTEN="127.0.0.1:$port"
+  validate_listen "$LISTEN" || die 'Invalid selected web port'
+}
+choose_listen_port() {
+  # Existing installations keep the saved binding unless --listen was given.
+  # Unattended installs retain 127.0.0.1:8080 without prompting.
+  if [[ "$LISTEN_PROVIDED" == true || "$NONINTERACTIVE" == true || ! -t 0 || -f "$CONFIG_DIR/service.env" ]]; then
+    return
+  fi
+  prompt_listen_port
+}
 set_listen_config() {
   local file="$CONFIG_DIR/service.env" current
   if [[ -f "$file" && "$LISTEN_PROVIDED" != true ]]; then
@@ -271,6 +293,8 @@ main() {
   if [[ ! -f "$STATE_DIR/auth.json" && "$NONINTERACTIVE" == false && "$PASSWORD_STDIN" != true && ! -t 0 ]]; then
     die 'Initial installation requires an interactive terminal or --password-stdin'
   fi
+  # Ask before downloading a release or modifying host files.
+  choose_listen_port
   local stage previous_binary='' old_unit=false had_binary=false
   stage=$(mktemp -d)
   trap 'rm -rf "$stage"' EXIT
