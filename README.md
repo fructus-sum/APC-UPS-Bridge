@@ -9,7 +9,7 @@ APC UPS Bridge turns a Raspberry Pi or Linux host into a lightweight, self-hoste
 ## Features available in Phase 3
 
 - Live mains/battery state, charge, runtime, load, voltage, UPS model and communication health when reported by the UPS.
-- Password-protected dashboard, events/reports and settings; administrator login and password rotation.
+- Password-protected dashboard, events/reports and settings; administrator login and password rotation.\n- Conservative firmware version advisory on the web dashboard for recognized, reference-matched UPS devices (manual update guidance only). See [firmware checker](docs/FIRMWARE.md).
 - Security controls: salted PBKDF2-SHA256 password hashing, ephemeral authenticated sessions, login attempt limits, and CSRF tokens on updates.
 - Event-only monthly JSONL logs, adjustable retention including unlimited; CSV download for recent events.
 - Editable polling interval (5–3600 s), low battery **warning** level (0–100%), and event retention (0–36500 days). Changes are applied without restarting.
