@@ -20,13 +20,13 @@ sudo bash install.sh --version v0.1.0
 
 Replace `v0.1.0` with an **actually published GitHub release**; omit `--version` for the latest published release. Enter and confirm a strong administrator password when prompted. On a new **interactive** installation, the installer also asks which web interface port to use. Press Enter to accept **8080**, or enter a port between **1 and 65535**. The interface still binds to **127.0.0.1** by default, so it is not reachable from other LAN computers. An existing installation keeps its prior address and port automatically. Unattended installations default to 8080 unless an explicit `--listen` address is provided.
 
-On a clean Pi with an **APC USB UPS** and no configured apcupsd instance, the explicit setup option backs up and configures the UPS daemon for USB/NIS localhost access:
+On a fresh Pi where the installer needs to install `apcupsd`, it now automatically backs up the new daemon configuration and sets up USB UPS monitoring, the localhost NIS listener, and systemd startup. It attempts an `apcaccess status` communication check afterward, displaying a warning if the UPS cannot be read. Existing `apcupsd` installations and upgrades retain their configuration. To configure an existing daemon explicitly, use:
 
 ```bash
 sudo bash install.sh --configure-apcupsd
 ```
 
-Do not use `--configure-apcupsd` if the host is managing additional UPS units or has an apcupsd configuration that must remain untouched. It changes the apcupsd USB mode, NIS listener to `127.0.0.1:3551`, and on Debian-like systems enables `ISCONFIGURED=yes`. The existing `BATTERYLEVEL`, `MINUTES` and `TIMEOUT` settings are retained unless `--host-protection` is explicitly requested. Prior config copies use `.backup-YYYYMMDDTHHMMSSZ` suffixes.
+Do not use `--configure-apcupsd` if the host is managing additional UPS units or has an apcupsd configuration that must remain untouched. Use `--skip-apcupsd-setup` to suppress automatic USB setup on a fresh installation. It changes the apcupsd USB mode, NIS listener to `127.0.0.1:3551`, and on Debian-like systems enables `ISCONFIGURED=yes`. The existing `BATTERYLEVEL`, `MINUTES` and `TIMEOUT` settings are retained unless `--host-protection` is explicitly requested. Prior config copies use `.backup-YYYYMMDDTHHMMSSZ` suffixes.
 
 To skip the port prompt or explicitly select a binding, supply `--listen`, for example `--listen 127.0.0.1:9090`. To deliberately expose the interface on the private LAN:
 
@@ -79,7 +79,7 @@ On an already-configured device, download the current installer again, inspect i
 sudo bash install.sh --version v0.1.1
 ```
 
-Release archives are matched against SHA-256 sums from the same GitHub release, and extracted as one named executable. The upgrade keeps service login, SSH identity, remote device rules, event logs and previous power state. Existing apcupsd configuration is *not touched* unless `--configure-apcupsd` is supplied. If the replacement service fails immediately, the installer attempts to restore the previous binary/service unit and restart it. As with any automated process, this is not a substitute for a full backup or UPS dry-run.
+Release archives are matched against SHA-256 sums from the same GitHub release, and extracted as one named executable. The upgrade keeps service login, SSH identity, remote device rules, event logs and previous power state. Existing apcupsd configuration is *not touched* unless `--configure-apcupsd` is supplied; automatic USB setup only occurs when the installer itself installs apcupsd on a fresh Bridge host. If the replacement service fails immediately, the installer attempts to restore the previous binary/service unit and restart it. As with any automated process, this is not a substitute for a full backup or UPS dry-run.
 
 ## Uninstall
 
