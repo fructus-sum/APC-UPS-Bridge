@@ -31,7 +31,7 @@ less install.sh
 sudo bash install.sh
 ```
 
-**No versioned binary release has been published by this code change.** Publishing an actual tag/release and testing on real hardware are required first. The installer does not replace existing apcupsd configuration without `--configure-apcupsd` and remote shutdown remains opt-in. During an interactive first installation, choose the web interface port (press Enter for 8080). The app binds only to localhost by default; upgrades preserve the prior port unless `--listen` is explicitly supplied.
+**No versioned binary release has been published by this code change.** Publishing an actual tag/release and testing on real hardware are required first. On a clean host, the installer automatically sets up a newly installed apcupsd for USB monitoring; existing UPS daemon configurations are preserved unless `--configure-apcupsd` is given and remote shutdown remains opt-in. During an interactive first installation, choose the web interface port (press Enter for 8080). The app binds only to localhost by default; upgrades preserve the prior port unless `--listen` is explicitly supplied.
 
 ## Quick start (development/testing)
 
