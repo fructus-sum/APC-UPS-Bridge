@@ -1,0 +1,2 @@
+MODEL    : legacy UPS
+BCHARGE  : 100.0 Percent

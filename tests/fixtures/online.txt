@@ -1,0 +1,11 @@
+APC      : 001,041,1005
+DATE     : 2026-10-10 12:00:00 +0100
+UPSNAME  : Old APC in rack
+MODEL    : Back-UPS RS 1500
+STATUS   : ONLINE
+LINEV    : 229.8 Volts
+LOADPCT  : 24.0 Percent
+BCHARGE  : 100.0 Percent
+TIMELEFT : 42.3 Minutes
+OUTPUTV  : 229.8 Volts
+END APC  : 2026-10-10 12:00:00 +0100

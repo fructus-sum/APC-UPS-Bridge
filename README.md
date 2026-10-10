@@ -2,32 +2,31 @@
 
 **Give older USB-connected APC UPS units a new life on the network.**
 
-APC UPS Bridge is a planned lightweight, self-hosted gateway for monitoring and protecting equipment powered by legacy APC USB uninterruptible power supplies (UPS). A Raspberry Pi or another Linux computer connects to the UPS over USB and makes its status available across the local network.
+APC UPS Bridge is a lightweight, self-hosted gateway for monitoring and protecting equipment powered by legacy APC USB uninterruptible power supplies. A Raspberry Pi or another Linux computer will connect to the UPS over USB and make status available across the local network.
 
-> **Project status: planning only.** There is no released application or working installer yet. Do not rely on this repository for power protection until the software has been implemented and tested.
+> **Development status: Phase 2 monitoring core implemented for review, not a production release.** There is no web dashboard, installer, or working remote shutdown/recovery yet. Do not rely on this version to protect equipment.
 
 ## Design goals
 
-- Support APC USB UPS units compatible with `apcupsd` and `apcaccess` first.
-- Live, responsive network dashboard showing only readings supported by the connected UPS.
-- Password-protected administration and configurable remote SSH shutdown / Wake-on-LAN recovery.
-- No database, no cloud service, and as few dependencies and exposed ports as possible.
-- Record significant events only, with configurable long-term log retention.
-- Run unattended at boot on Raspberry Pi OS and other supported systemd Linux distributions.
-- Make installation, backup, updates and removal straightforward and documented.
+- APC USB UPS support through `apcupsd` / `apcaccess` first.
+- One lightweight application, minimal dependencies, no database and no cloud services.
+- Live web dashboard and password-protected administration (planned).
+- Configurable remote shutdown and Wake-on-LAN recovery (planned, disabled until tested).
+- Event-only logs with adjustable retention, including unlimited.
+- Autostart, secure installation, and Raspberry Pi/Linux support (planned).
 
-## Planned first release
+## Phase 2 monitoring core
 
-The first release will focus on one locally attached APC USB UPS, a single lightweight application process, reliable power-state handling, a simple browser interface, and event logs. It will use the existing `apcupsd` daemon to communicate with the hardware rather than implementing a competing USB driver.
+Go 1.22+ is needed to compile, but the compiled executable has no extra Go runtime dependency. An independently configured `apcupsd` and `apcaccess` remain necessary.
 
-A network UPS gateway is not the same as adding a physical network card to the UPS. The Linux host remains connected to the UPS by USB and must be powered appropriately.
+```sh
+go test ./...
+go build -o apc-ups-bridge ./cmd/apc-ups-bridge
+./apc-ups-bridge --once --log-dir ./test-events
+```
+
+For more details, flags, and logging behaviour see [Phase 2 usage](docs/PHASE-2.md) and the [Architecture proposal](docs/ARCHITECTURE.md).
 
 ## Security
 
-The intended default is local-network operation with authentication for administration. External internet exposure and port forwarding are not recommended. The monitoring web service will run without root privileges; elevated shutdown actions will be restricted and explicitly configured.
-
-## Development
-
-Architecture and scope are being defined before implementation. Source code, installation instructions and compatibility results will be published as they become available.
-
-APC is a trademark of its respective owner. This independent project is not affiliated with or endorsed by APC or Schneider Electric.
+No remotely accessible web service is running in Phase 2. Once a web interface is added, authentication will be required for administration and internet exposure will not be recommended. This project is independent and not affiliated with or endorsed by APC or Schneider Electric.
