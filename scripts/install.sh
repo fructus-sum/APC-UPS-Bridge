@@ -210,19 +210,26 @@ UNIT
   mv -f "$tmp" "${UNIT_DIR}/${SERVICE}"
   systemctl daemon-reload
 }
+validate_web_port() {
+  local port="$1"
+  [[ "$port" =~ ^[1-9][0-9]{0,4}$ ]] || return 1
+  (( 10#$port >= 1 && 10#$port <= 65535 ))
+}
+prompt_listen_port() {
+  local port
+  IFS= read -r -p 'Web interface port [8080]: ' port || die 'Could not read web interface port'
+  port=${port:-8080}
+  validate_web_port "$port" || die 'Invalid web port: enter a number from 1 to 65535'
+  LISTEN="127.0.0.1:$port"
+  validate_listen "$LISTEN" || die 'Invalid selected web port'
+}
 choose_listen_port() {
   # Existing installations keep the saved binding unless --listen was given.
   # Unattended installs retain 127.0.0.1:8080 without prompting.
   if [[ "$LISTEN_PROVIDED" == true || "$NONINTERACTIVE" == true || ! -t 0 || -f "$CONFIG_DIR/service.env" ]]; then
     return
   fi
-  local port
-  read -r -p 'Web interface port [8080]: ' port
-  port=${port:-8080}
-  [[ "$port" =~ ^[1-9][0-9]{0,4}$ ]] || die 'Invalid web port: enter a number from 1 to 65535'
-  (( 10#$port <= 65535 )) || die 'Web port must be 1–65535'
-  LISTEN="127.0.0.1:$port"
-  validate_listen "$LISTEN" || die 'Invalid selected web port'
+  prompt_listen_port
 }
 set_listen_config() {
   local file="$CONFIG_DIR/service.env" current
@@ -286,6 +293,8 @@ main() {
   if [[ ! -f "$STATE_DIR/auth.json" && "$NONINTERACTIVE" == false && "$PASSWORD_STDIN" != true && ! -t 0 ]]; then
     die 'Initial installation requires an interactive terminal or --password-stdin'
   fi
+  # Ask before downloading a release or modifying host files.
+  choose_listen_port
   local stage previous_binary='' old_unit=false had_binary=false
   stage=$(mktemp -d)
   trap 'rm -rf "$stage"' EXIT
@@ -294,7 +303,6 @@ main() {
   # Existing UPS daemon configuration remains untouched unless explicitly requested.
   if [[ "$SETUP_APC" == true ]]; then configure_apcupsd; fi
   ensure_user
-  choose_listen_port
   set_listen_config
   if [[ ! -f "$STATE_DIR/auth.json" ]]; then
     read_initial_password "${stage}/${APP}"
