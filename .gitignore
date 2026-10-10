@@ -1,0 +1,9 @@
+# Local builds and runtime state (never publish credentials, state, or logs)
+/bin/
+/dist/
+*.test
+*.out
+*.jsonl
+state.json
+auth.json
+config.json

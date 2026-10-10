@@ -1,0 +1,6 @@
+APC      : 001,041,1005
+MODEL    : Back-UPS RS 1500
+STATUS   : ONBATT LOWBATT
+BCHARGE  : 18.0 Percent
+TIMELEFT : 2.0 Minutes
+LINEV    : 0.0 Volts
