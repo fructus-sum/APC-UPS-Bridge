@@ -39,6 +39,19 @@ async function refreshDashboard(){
   el('battery-bar').className='battery-fill'+(typeof r.battery_percent==='number'&&r.battery_percent<=20?' low':'');
  }catch(err){el('health').textContent='Unable to load status';el('health').className='state error';}
 }
+async function refreshFirmware(){
+ const warning=el('firmware-warning');
+ if(!warning)return;
+ try {
+  const fw=await getJSON('/api/firmware');
+  warning.hidden=fw.status!=='outdated';
+  if(fw.status==='outdated'){
+   el('firmware-message').textContent=fw.message;
+   el('firmware-versions').textContent='Installed: '+fw.installed+' · Latest referenced: UPS '+fw.latest+' · Reference reviewed: '+fw.reference_date;
+   // The update link is a fixed trusted Schneider Electric URL, not device data.
+  }
+ } catch(e) {warning.hidden=true;}
+}
 async function refreshRecent(){try{makeTimeline(el('recent-events'),await getJSON('/api/events?limit=5&days=30'));}catch(e){el('recent-events').textContent='Event history unavailable';}}
 async function refreshEvents(){
  try{
@@ -65,6 +78,6 @@ async function startSettings(){
   }catch(e){feedback.textContent='Could not save: '+e.message;}
  });
 }
-if(page==='/'){refreshDashboard();refreshRecent();setInterval(refreshDashboard,10000);setInterval(refreshRecent,60000);}
+if(page==='/'){refreshDashboard();refreshFirmware();refreshRecent();setInterval(refreshDashboard,10000);setInterval(refreshFirmware,60000);setInterval(refreshRecent,60000);}
 if(page==='/events'){refreshEvents();el('range').addEventListener('change',refreshEvents);el('refresh-events').addEventListener('click',refreshEvents);}
 if(page==='/settings') startSettings();
