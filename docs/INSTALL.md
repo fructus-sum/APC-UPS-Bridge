@@ -18,7 +18,7 @@ less install.sh
 sudo bash install.sh --version v0.1.0
 ```
 
-Replace `v0.1.0` with an **actually published GitHub release**; omit `--version` for the latest published release. Enter and confirm a strong administrator password when prompted. The initial web interface listens on **127.0.0.1:8080**, so it is not reachable from other LAN computers by default.
+Replace `v0.1.0` with an **actually published GitHub release**; omit `--version` for the latest published release. Enter and confirm a strong administrator password when prompted. On a new **interactive** installation, the installer also asks which web interface port to use. Press Enter to accept **8080**, or enter a port between **1 and 65535**. The interface still binds to **127.0.0.1** by default, so it is not reachable from other LAN computers. An existing installation keeps its prior address and port automatically. Unattended installations default to 8080 unless an explicit `--listen` address is provided.
 
 On a clean Pi with an **APC USB UPS** and no configured apcupsd instance, the explicit setup option backs up and configures the UPS daemon for USB/NIS localhost access:
 
@@ -28,7 +28,7 @@ sudo bash install.sh --configure-apcupsd
 
 Do not use `--configure-apcupsd` if the host is managing additional UPS units or has an apcupsd configuration that must remain untouched. It changes the apcupsd USB mode, NIS listener to `127.0.0.1:3551`, and on Debian-like systems enables `ISCONFIGURED=yes`. The existing `BATTERYLEVEL`, `MINUTES` and `TIMEOUT` settings are retained unless `--host-protection` is explicitly requested. Prior config copies use `.backup-YYYYMMDDTHHMMSSZ` suffixes.
 
-To deliberately expose the interface on the private LAN:
+To skip the port prompt or explicitly select a binding, supply `--listen`, for example `--listen 127.0.0.1:9090`. To deliberately expose the interface on the private LAN:
 
 ```bash
 sudo bash install.sh --listen 0.0.0.0:8080
