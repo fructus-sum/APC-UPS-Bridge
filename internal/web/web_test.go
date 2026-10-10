@@ -141,3 +141,12 @@ func TestPasswordChangeNeedsCSRF(t *testing.T) {
 		t.Fatal("sessions not revoked")
 	}
 }
+
+func TestFirmwareRouteAuthentication(t *testing.T) {
+ h,a:=setupWeb(t)
+ if w:=request(h,"GET","/api/firmware","",nil,"");w.Code!=401{t.Fatalf("firmware API exposed: %d",w.Code)}
+ token,_,err:=a.Login("127.0.0.1","admin","long secret passphrase");if err!=nil{t.Fatal(err)}
+ cookie:=&http.Cookie{Name:"ups_bridge_session",Value:token}
+ if w:=request(h,"GET","/api/firmware","",cookie,"");w.Code!=200||!strings.Contains(w.Body.String(),"\"status\":\"unknown\""){t.Fatalf("firmware API failed: %d %s",w.Code,w.Body.String())}
+ if w:=request(h,"POST","/api/firmware","",cookie,"");w.Code!=405{t.Fatalf("firmware API permits mutation: %d",w.Code)}
+}
