@@ -1,0 +1,25 @@
+name: Test
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Go tests
+        run: go test ./...
+      - name: Race tests
+        run: go test -race ./...
+      - name: Vet
+        run: go vet ./...
+      - name: Installer checks
+        run: bash -n scripts/*.sh && bash scripts/test-install.sh
