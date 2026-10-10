@@ -28,6 +28,8 @@ type Snapshot struct {
 	ObservedAt     time.Time  `json:"observed_at"`
 	Name           string     `json:"name,omitempty"`
 	Model          string     `json:"model,omitempty"`
+	SKU            string     `json:"sku,omitempty"`
+	Firmware       string     `json:"firmware,omitempty"`
 	Status         string     `json:"status"`
 	Flags          []string   `json:"flags"`
 	Power          PowerState `json:"power"`
@@ -67,6 +69,7 @@ func Parse(data []byte, now time.Time) (Snapshot, error) {
 	snap := Snapshot{
 		ObservedAt: now.UTC(), Name: fields["UPSNAME"], Model: fields["MODEL"],
 		Status: status, Flags: flags, Power: powerFromFlags(flags),
+		SKU: fields["SKU"], Firmware: fields["FIRMWARE"],
 		BatteryPercent: metric(fields["BCHARGE"], true),
 		RuntimeMinutes: metric(fields["TIMELEFT"], false),
 		LoadPercent:    metric(fields["LOADPCT"], false),
