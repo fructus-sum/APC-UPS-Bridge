@@ -74,4 +74,28 @@ printf 'ISCONFIGURED=no\n# retained\n' > "$stage/apcupsd.default"
 set_apc_default "$stage/apcupsd.default"
 grep -q '^ISCONFIGURED=yes$' "$stage/apcupsd.default"
 grep -q '^# retained$' "$stage/apcupsd.default"
+# Newly installed apcupsd on a fresh host configures USB automatically.
+CONFIG_DIR="$stage/new-install-config"
+PREFIX="$stage/new-install-bin"
+APP="apc-ups-bridge"
+mkdir -p "$CONFIG_DIR" "$PREFIX"
+SETUP_APC=false
+SKIP_AUTO_APC=false
+APCUPS_INSTALLED_BY_US=true
+should_configure_apcupsd
+# Existing apcupsd or a previous Bridge install must be preserved.
+APCUPS_INSTALLED_BY_US=false
+if should_configure_apcupsd; then echo 'Existing apcupsd was unexpectedly changed' >&2; exit 1; fi
+APCUPS_INSTALLED_BY_US=true
+touch "$CONFIG_DIR/service.env"
+if should_configure_apcupsd; then echo 'Upgrade was unexpectedly reconfigured' >&2; exit 1; fi
+rm "$CONFIG_DIR/service.env"
+touch "$PREFIX/$APP"
+if should_configure_apcupsd; then echo 'Existing binary was unexpectedly reconfigured' >&2; exit 1; fi
+rm "$PREFIX/$APP"
+SKIP_AUTO_APC=true
+if should_configure_apcupsd; then echo 'Skip flag ignored' >&2; exit 1; fi
+SETUP_APC=true
+SKIP_AUTO_APC=false
+should_configure_apcupsd
 echo 'Installer unit tests passed (no system changes)'
