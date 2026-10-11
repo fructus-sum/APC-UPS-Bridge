@@ -197,6 +197,10 @@ func run() int {
 	lastPowerError := false
 	poll := func() {
 		err := mon.Poll(ctx)
+		if ctx.Err() != nil {
+			// Stopping: the monitor snapshot is stale, so never act on it.
+			return
+		}
 		if err != nil && ctx.Err() == nil && !lastPollError {
 			logger.Printf("UPS poll error (repeats suppressed): %v", err)
 		}

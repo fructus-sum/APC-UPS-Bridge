@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"net"
 	"os/exec"
+	"regexp"
 	"strconv"
-	"strings"
 	"syscall"
 	"time"
 )
@@ -48,12 +48,20 @@ func (e LinuxExecutor) Shutdown(ctx context.Context, d Device) error {
 	return nil
 }
 
+// sshDroppedSession matches the line OpenSSH prints when an established session
+// is closed by the server while a command is running. Pre-authentication drops
+// ("kex_exchange_identification: Connection closed by remote host", "Connection
+// closed by 10.0.0.5 port 22") deliberately do not match: the command never ran.
+var sshDroppedSession = regexp.MustCompile(`(?m)^Connection to \S+ closed by remote host\.?\r?$`)
+
 // sshShutdownDropped reports whether an ssh failure is the host closing the
 // session because it is already shutting down: ssh exits with 255 and prints
-// "closed by remote host" when the connection disappears under a running command.
+// "Connection to HOST closed by remote host." when an established connection
+// disappears under a running command.
 func sshShutdownDropped(exitCode int, output []byte) bool {
-	return exitCode == 255 && strings.Contains(strings.ToLower(string(output)), "closed by remote host")
+	return exitCode == 255 && sshDroppedSession.Match(output)
 }
+
 func limitedOutput(b []byte) string {
 	if len(b) > 300 {
 		b = b[:300]

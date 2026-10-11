@@ -56,16 +56,16 @@ for gone in verify_release download_release arch_name validate_version; do
 done
 
 # --- listen address validation ---
-for bind in '127.0.0.1:8080' '0.0.0.0:8080' '192.168.1.10:65535'; do
+for bind in '127.0.0.1:8080' '0.0.0.0:8080' '192.168.1.10:65535' '0.0.0.0:1024'; do
   validate_listen "$bind" || fail "bind rejected: $bind"
 done
-for bind in 'foo:8080' '192.168.1.999:8080' '0.0.0.0:0' '0.0.0.0:65536' '0.0.0.0:88;whoami' '127.0.0.1:08'; do
+for bind in 'foo:8080' '192.168.1.999:8080' '0.0.0.0:0' '0.0.0.0:1' '0.0.0.0:80' '0.0.0.0:443' '0.0.0.0:1023' '0.0.0.0:65536' '0.0.0.0:88;whoami' '127.0.0.1:08'; do
   if validate_listen "$bind"; then fail "Bad bind accepted: $bind"; fi
 done
 
 # --- web port validation ---
-for port in 1 8080 9090 65535; do validate_web_port "$port" || fail "port rejected $port"; done
-for port in 0 65536 08 -1 abc '80;id' ' 8080' ''; do
+for port in 1024 8080 9090 65535; do validate_web_port "$port" || fail "port rejected $port"; done
+for port in 0 1 80 443 1023 65536 08 -1 abc '80;id' ' 8080' ''; do
   if validate_web_port "$port"; then fail "Bad port accepted: $port"; fi
 done
 
@@ -103,6 +103,8 @@ printf '9090\n' > "$TTY_DEVICE"
 choose_listen_port 2>/dev/null </dev/null
 [[ "$LISTEN" == 0.0.0.0:9090 ]] || fail 'prompted port not applied'
 printf '65536\n' > "$TTY_DEVICE"
+must_fail prompt_listen_port
+printf '80\n' > "$TTY_DEVICE"
 must_fail prompt_listen_port
 # --non-interactive never prompts even with a terminal.
 LISTEN=0.0.0.0:8080; NONINTERACTIVE=true
@@ -251,6 +253,85 @@ for mode in commlost nostatus fail; do
 done
 PATH=$OLD_PATH
 
+# --- saved listen address is validated in pre-flight ---
+CONFIG_DIR="$stage/preflight"
+mkdir -p "$CONFIG_DIR"
+LISTEN_PROVIDED=false; LISTEN=0.0.0.0:8080
+load_existing_listen   # no service.env: no-op
+[[ "$LISTEN" == 0.0.0.0:8080 ]] || fail 'load_existing_listen changed LISTEN without service.env'
+printf 'APC_LISTEN=192.168.1.5:9000\n' > "$CONFIG_DIR/service.env"
+load_existing_listen
+[[ "$LISTEN" == 192.168.1.5:9000 ]] || fail 'saved listen not loaded'
+for bad in 'APC_LISTEN=nonsense' 'APC_LISTEN=0.0.0.0:80' 'APC_LISTEN=' 'OTHER=1'; do
+  printf '%s\n' "$bad" > "$CONFIG_DIR/service.env"
+  LISTEN=0.0.0.0:8080
+  must_fail load_existing_listen
+done
+LISTEN_PROVIDED=true; LISTEN=0.0.0.0:7000
+load_existing_listen   # --listen given: a bad saved value is irrelevant
+[[ "$LISTEN" == 0.0.0.0:7000 ]] || fail '--listen overridden by saved value'
+LISTEN_PROVIDED=false; LISTEN=0.0.0.0:8080
+rm -f "$CONFIG_DIR/service.env"
+
+# --- start check and rollback (fake systemctl / runuser) ---
+mkdir -p "$stage/scbin" "$stage/sc"
+cat > "$stage/scbin/systemctl" <<'FAKE'
+#!/usr/bin/env bash
+d="$FAKE_SC_DIR"
+echo "$*" >> "$d/calls"
+case "$1" in
+  is-active)
+    [[ "${FAKE_SC_MODE:-stable}" != inactive ]] ;;
+  show)
+    n=$(cat "$d/restarts" 2>/dev/null || echo 0)
+    if [[ "${FAKE_SC_MODE:-stable}" == restarting ]]; then n=$((n + 1)); echo "$n" > "$d/restarts"; fi
+    echo "$n" ;;
+  *) : ;;
+esac
+FAKE
+printf '#!/usr/bin/env bash\nexit 1\n' > "$stage/scbin/runuser"
+chmod +x "$stage/scbin/systemctl" "$stage/scbin/runuser"
+OLD_PATH=$PATH
+PATH="$stage/scbin:$PATH"
+export FAKE_SC_DIR="$stage/sc"
+SERVICE_SETTLE_SECONDS=2
+: > "$FAKE_SC_DIR/calls"; echo 0 > "$FAKE_SC_DIR/restarts"
+FAKE_SC_MODE=stable wait_for_service_stable || fail 'stable service rejected'
+: > "$FAKE_SC_DIR/calls"
+if FAKE_SC_MODE=inactive wait_for_service_stable; then fail 'crashed service accepted'; fi
+echo 0 > "$FAKE_SC_DIR/restarts"
+if FAKE_SC_MODE=restarting wait_for_service_stable; then fail 'restarting service accepted'; fi
+
+WORKDIR="$stage/rb-work"; PREFIX="$stage/rb-bin"; UNIT_DIR="$stage/rb-unit"; CONFIG_DIR="$stage/rb-conf"
+mkdir -p "$WORKDIR" "$PREFIX" "$UNIT_DIR" "$CONFIG_DIR"
+# Fresh install: everything new is removed, the unit is disabled first, nothing is restarted.
+printf new > "$PREFIX/$APP"; printf new > "$UNIT_DIR/$SERVICE"; printf new > "$CONFIG_DIR/service.env"
+ROLLBACK_HAD_BINARY=false; ROLLBACK_HAD_UNIT=false; ROLLBACK_HAD_ENV=false
+: > "$FAKE_SC_DIR/calls"
+rollback_install 'test.' >/dev/null
+[[ ! -e "$PREFIX/$APP" && ! -e "$UNIT_DIR/$SERVICE" && ! -e "$CONFIG_DIR/service.env" ]] || fail 'fresh rollback left files'
+grep -q "^disable $SERVICE" "$FAKE_SC_DIR/calls" || fail 'fresh rollback did not disable the unit'
+if grep -q '^restart' "$FAKE_SC_DIR/calls"; then fail 'fresh rollback restarted a service'; fi
+[[ $(grep -n '^disable' "$FAKE_SC_DIR/calls" | cut -d: -f1) -lt $(grep -n '^daemon-reload' "$FAKE_SC_DIR/calls" | cut -d: -f1) ]] || fail 'disable must precede daemon-reload'
+# Upgrade: previous binary, unit and service.env come back; previous service is restarted.
+printf old > "$WORKDIR/previous.binary"; printf old > "$WORKDIR/previous.service"; printf old > "$WORKDIR/previous.service.env"
+printf new > "$PREFIX/$APP"; printf new > "$UNIT_DIR/$SERVICE"; printf new > "$CONFIG_DIR/service.env"
+ROLLBACK_HAD_BINARY=true; ROLLBACK_HAD_UNIT=true; ROLLBACK_HAD_ENV=true
+: > "$FAKE_SC_DIR/calls"
+rollback_install 'test.' >/dev/null
+for p in "$PREFIX/$APP" "$UNIT_DIR/$SERVICE" "$CONFIG_DIR/service.env"; do [[ $(cat "$p") == old ]] || fail "upgrade rollback did not restore $p"; done
+grep -q "^restart $SERVICE" "$FAKE_SC_DIR/calls" || fail 'upgrade rollback did not restart the old service'
+[[ -z $(ls -A "$PREFIX" | grep -v "^$APP\$") ]] || fail 'rollback left temp files'
+# Password failure: clear message, installed files rolled back.
+printf new > "$PREFIX/$APP"; printf new > "$CONFIG_DIR/service.env"
+ROLLBACK_HAD_BINARY=false; ROLLBACK_HAD_UNIT=false; ROLLBACK_HAD_ENV=false
+INITIAL_PASSWORD='a-long-enough-password'
+out=$( (apply_initial_password "$PREFIX/$APP") 2>&1 ) && fail 'password failure not fatal'
+[[ "$out" == *'Could not set the administrator password'* ]] || fail "unclear password failure message: $out"
+[[ ! -e "$PREFIX/$APP" && ! -e "$CONFIG_DIR/service.env" ]] || fail 'password failure did not roll back'
+PATH=$OLD_PATH
+unset FAKE_SC_DIR
+
 # --- installed unit matches the packaged unit ---
 sed -n "/<<'UNIT'\$/,/^UNIT\$/p" "$ROOT/scripts/install.sh" | sed '1d;$d' | tr -d '\r' > "$stage/embedded.service"
 tr -d '\r' < "$ROOT/packaging/systemd/apc-ups-bridge.service" > "$stage/packaged.service"
@@ -261,6 +342,7 @@ cmp -s "$stage/embedded.service" "$stage/packaged.service" || fail 'packaging/sy
 [[ $(grep -c 'main "\$@"' "$ROOT/scripts/install.sh") == 1 ]] || fail 'main must be invoked exactly once'
 if grep -En 'releases/|SHA256SUMS|-t 0' "$ROOT/scripts/install.sh" >/dev/null; then fail 'install.sh still references releases or -t 0'; fi
 bash -n "$ROOT/scripts/uninstall.sh" || fail 'uninstall.sh syntax'
+[[ "$(tail -n 1 "$ROOT/scripts/uninstall.sh")" == 'main "$@"' ]] || fail 'uninstall.sh must invoke main on its last line'
 [[ $(bash "$ROOT/scripts/uninstall.sh" --help | head -n 1) == Usage:* ]] || fail 'uninstall --help'
 bash "$ROOT/scripts/uninstall.sh" --bogus >/dev/null 2>&1 && fail 'uninstall accepted a bogus argument'
 echo 'Installer unit tests passed (no system changes)'

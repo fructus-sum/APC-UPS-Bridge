@@ -177,6 +177,11 @@ func (c *Controller) Observe(ctx context.Context, s monitor.Status) error {
 }
 
 func (c *Controller) observe(ctx context.Context, s monitor.Status, emit func(typ, level string, data map[string]any)) error {
+	// A cancelled context means the service is stopping: the snapshot may be
+	// stale and any command would fail, so do nothing and mutate no state.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	now := c.now().UTC()
 	cfg := c.store.Get()
 	if !cfg.Enabled {

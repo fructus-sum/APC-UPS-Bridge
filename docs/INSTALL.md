@@ -36,7 +36,7 @@ Supported CPUs are x86-64, 64-bit ARM, and 32-bit ARM (a 32-bit Raspberry Pi OS 
 
 The web interface is served on **all interfaces** (`0.0.0.0:<port>`) so you can open it from any device on your LAN. It is **plain HTTP**: the administrator password and session cookie cross your network unencrypted. Keep it on a trusted home network, **never port-forward it to the internet**, and use a VPN or a local HTTPS reverse proxy for anything remote. The installer does not change firewall rules.
 
-- Pick another port at the prompt, or pass `--listen 192.168.1.20:9090` to bind one address. `--listen 127.0.0.1:8080` keeps it host-only (then put a reverse proxy in front).
+- Pick another port at the prompt (1024–65535; the service runs unprivileged and cannot bind ports below 1024), or pass `--listen 192.168.1.20:9090` to bind one address. `--listen 127.0.0.1:8080` keeps it host-only (then put a reverse proxy in front).
 - Upgrades keep the existing `/etc/apc-ups-bridge/service.env` binding unless you give `--listen`. An install made by an earlier version that is bound to `127.0.0.1` stays that way until you re-run with `--listen 0.0.0.0:8080`.
 - The URL hints come from `hostname -I`; if it is unavailable the installer prints `http://<this-host-ip>:8080/`.
 
@@ -44,7 +44,7 @@ The web interface is served on **all interfaces** (`0.0.0.0:<port>`) so you can 
 
 ```text
 --branch NAME           branch to build when not run from a checkout (default main)
---listen HOST:PORT      web binding (default 0.0.0.0:8080)
+--listen HOST:PORT      web binding (default 0.0.0.0:8080; port 1024-65535)
 --configure-apcupsd     back up and configure an existing apcupsd for a local USB UPS
 --skip-apcupsd-setup    do not auto-configure an apcupsd the installer just installed
 --host-protection       with --configure-apcupsd: native host shutdown at 10% battery or 3 minutes
@@ -100,7 +100,7 @@ Create a limited-purpose SSH identity **for the `apc-ups-bridge` service user** 
 
 ## Updates and rollback
 
-Run the install command again (the one-liner, or `git pull && sudo bash scripts/install.sh` in a checkout). It rebuilds from source and swaps the binary. The upgrade keeps the service login, SSH identity, remote device rules, event logs, power state and the existing listen address. Existing apcupsd configuration is *not touched* unless `--configure-apcupsd` is supplied. If the replacement service fails to start, the installer restores the previous binary and unit and restarts it. As with any automated process, this is not a substitute for a full backup or UPS dry-run.
+Run the install command again (the one-liner, or `git pull && sudo bash scripts/install.sh` in a checkout). It rebuilds from source and swaps the binary. The upgrade keeps the service login, SSH identity, remote device rules, event logs, power state and the existing listen address. Existing apcupsd configuration is *not touched* unless `--configure-apcupsd` is supplied. After restarting, the installer watches the service for about five seconds. If it fails to start or dies (for example because the port is already used by another service), the installer restores the previous binary, unit and `service.env` (or removes the new ones on a first install) and restarts the old service. As with any automated process, this is not a substitute for a full backup or UPS dry-run.
 
 ## Uninstall
 

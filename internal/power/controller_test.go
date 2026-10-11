@@ -660,3 +660,56 @@ func TestLowBatteryFlagBlocksRecoveryTimeout(t *testing.T) {
 		t.Fatal("recovery did not proceed after LOWBATT cleared")
 	}
 }
+
+func TestCancelledContextDoesNothing(t *testing.T) {
+	store, path := configured(t)
+	w := &memoryWriter{}
+	f := &fakeExecutor{}
+	now := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
+	c := makeController(t, store, path, w, f, &now)
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	stateBytes := func() []byte {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+
+	// Before any shutdown: a stale low-battery snapshot must not burn an attempt.
+	observe(t, c, sample(apc.Online, 100))
+	observe(t, c, sample(apc.OnBattery, 100))
+	now = now.Add(11 * time.Second)
+	before := stateBytes()
+	eventsBefore := len(w.events)
+	if err := c.Observe(cancelled, sample(apc.OnBattery, 15)); !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context error, got %v", err)
+	}
+	if len(f.shutdowns) != 0 || string(stateBytes()) != string(before) || len(w.events) != eventsBefore {
+		t.Fatal("cancelled context changed state or ran a shutdown")
+	}
+	observe(t, c, sample(apc.OnBattery, 15))
+	if len(f.shutdowns) != 1 || c.View().Actions["node-1"].ShutdownAttempts != 1 {
+		t.Fatal("attempt budget was spent by the cancelled observation")
+	}
+
+	// During recovery: a cancelled context must not spend the one-shot wake.
+	observe(t, c, sample(apc.Online, 100))
+	now = now.Add(31 * time.Second)
+	before = stateBytes()
+	eventsBefore = len(w.events)
+	if err := c.Observe(cancelled, sample(apc.Online, 100)); !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context error, got %v", err)
+	}
+	if len(f.wakes) != 0 || !c.View().Active || string(stateBytes()) != string(before) || len(w.events) != eventsBefore {
+		t.Fatal("cancelled context changed state or sent a wake")
+	}
+	if c.View().Actions["node-1"].WakeAttempted {
+		t.Fatal("wake attempt consumed by cancelled observation")
+	}
+	observe(t, c, sample(apc.Online, 100))
+	if len(f.wakes) != 1 || c.View().Active {
+		t.Fatal("recovery did not complete after the cancelled observation")
+	}
+}

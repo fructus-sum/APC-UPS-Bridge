@@ -19,6 +19,8 @@ APC_CONF=/etc/apcupsd/apcupsd.conf
 APC_DEFAULTS=/etc/default/apcupsd
 BUILD_PARENT=/var/tmp
 TTY_DEVICE=/dev/tty
+MIN_PORT=1024
+SERVICE_SETTLE_SECONDS=5
 GO_MIN_MAJOR=1
 GO_MIN_MINOR=22
 DEFAULT_BRANCH=main
@@ -38,6 +40,9 @@ WORKDIR=''
 SOURCE_DIR=''
 GO_BIN=''
 INITIAL_PASSWORD=''
+ROLLBACK_HAD_BINARY=false
+ROLLBACK_HAD_UNIT=false
+ROLLBACK_HAD_ENV=false
 GO_ENV=()
 
 usage() {
@@ -47,7 +52,7 @@ Usage: sudo bash scripts/install.sh [options]
    or: curl -fsSL https://raw.githubusercontent.com/fructus-sum/APC-UPS-Bridge/main/scripts/install.sh | sudo bash
    or: ... | sudo bash -s -- [options]
   --branch NAME           When not run from a checkout, build this branch (default: main)
-  --listen HOST:PORT      Web binding (default 0.0.0.0:8080, reachable on your LAN).
+  --listen HOST:PORT      Web binding (default 0.0.0.0:8080, reachable on your LAN); port 1024-65535
                           Interactive first install asks for a port [8080].
   --configure-apcupsd     Back up and configure apcupsd for a local USB UPS
   --skip-apcupsd-setup    Do not auto-configure an apcupsd that this installer just installed
@@ -101,7 +106,7 @@ validate_listen() {
   [[ "$value" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}:[0-9]{1,5}$ ]] || return 1
   port=${value##*:}; host=${value%:*}
   [[ "$port" != 0* ]] || return 1
-  (( 10#$port >= 1 && 10#$port <= 65535 )) || return 1
+  (( 10#$port >= MIN_PORT && 10#$port <= 65535 )) || return 1
   local octet
   local -a octets
   IFS=. read -r -a octets <<< "$host"
@@ -131,7 +136,7 @@ parse_args() {
     esac
   done
   validate_branch "$BRANCH" || die 'Invalid --branch (letters, digits, . _ - / only; no "..")'
-  validate_listen "$LISTEN" || die 'Invalid --listen (IPv4:port only; port 1-65535)'
+  validate_listen "$LISTEN" || die 'Invalid --listen (IPv4:port only; use a port from 1024 to 65535, the service runs unprivileged and cannot bind lower ports)'
   if [[ "$SETUP_APC" == true && "$SKIP_AUTO_APC" == true ]]; then
     die '--configure-apcupsd and --skip-apcupsd-setup cannot be combined'
   fi
@@ -312,13 +317,13 @@ UNIT
 validate_web_port() {
   local port="$1"
   [[ "$port" =~ ^[1-9][0-9]{0,4}$ ]] || return 1
-  (( 10#$port >= 1 && 10#$port <= 65535 ))
+  (( 10#$port >= MIN_PORT && 10#$port <= 65535 ))
 }
 prompt_listen_port() {
   local port
   port=$(read_tty_line 'Web interface port [8080]: ') || die 'Could not read web interface port'
   port=${port:-8080}
-  validate_web_port "$port" || die 'Invalid web port: enter a number from 1 to 65535'
+  validate_web_port "$port" || die 'Invalid web port: use 1024-65535 (the service runs unprivileged and cannot bind ports below 1024)'
   LISTEN="0.0.0.0:$port"
   validate_listen "$LISTEN" || die 'Invalid selected web port'
 }
@@ -330,13 +335,22 @@ choose_listen_port() {
   fi
   prompt_listen_port
 }
-set_listen_config() {
+# Existing installs keep their saved binding unless --listen was given. Called during
+# pre-flight so a bad saved value stops the run before any host change.
+load_existing_listen() {
   local file="$CONFIG_DIR/service.env" current
   if [[ -f "$file" && "$LISTEN_PROVIDED" != true ]]; then
-    # Preserve user-edited service settings on upgrade.
     current=$(sed -n 's/^APC_LISTEN=//p' "$file" | head -n 1)
-    validate_listen "$current" || die "Invalid existing service.env listening address: $current"
+    validate_listen "$current" || die "Invalid existing $file listening address: '$current' (need IPv4:port, port 1024-65535). Fix it or pass --listen."
     LISTEN="$current"
+  fi
+  return 0
+}
+set_listen_config() {
+  local file="$CONFIG_DIR/service.env"
+  if [[ -f "$file" && "$LISTEN_PROVIDED" != true ]]; then
+    # Preserve user-edited service settings on upgrade.
+    load_existing_listen
     return
   fi
   printf 'APC_LISTEN=%s\n' "$LISTEN" > "${file}.tmp"
@@ -381,8 +395,51 @@ collect_initial_password() {
 apply_initial_password() {
   local binary="$1"
   # The service user cannot traverse root's build dir, so this runs the installed binary.
-  printf '%s\n' "$INITIAL_PASSWORD" | (cd / && runuser -u "$SERVICE_USER" -- "$binary" --auth-file "$STATE_DIR/auth.json" --set-password-stdin)
+  if ! printf '%s\n' "$INITIAL_PASSWORD" | (cd / && runuser -u "$SERVICE_USER" -- "$binary" --auth-file "$STATE_DIR/auth.json" --set-password-stdin); then
+    INITIAL_PASSWORD=''
+    rollback_install 'Could not set the administrator password.'
+    die 'Could not set the administrator password (see the error above). Nothing was started; fix the problem and re-run the installer.'
+  fi
   INITIAL_PASSWORD=''
+}
+
+# --- start check and rollback ----------------------------------------------------
+service_restarts() { systemctl show -p NRestarts --value "$SERVICE" 2>/dev/null </dev/null || true; }
+# Type=simple reports "active" the moment the process forks, so watch the unit for a few
+# seconds: fail if it leaves "active" (crashed, e.g. port already in use) or restarts.
+wait_for_service_stable() {
+  local i baseline now
+  baseline=$(service_restarts)
+  for ((i = 0; i < SERVICE_SETTLE_SECONDS; i++)); do
+    sleep 1
+    systemctl is-active --quiet "$SERVICE" </dev/null || return 1
+    now=$(service_restarts)
+    [[ "$now" == "$baseline" ]] || return 1
+  done
+  systemctl is-active --quiet "$SERVICE" </dev/null
+}
+# restore_file BACKUP DEST: copy via temp file + rename, safe for a running executable.
+restore_file() {
+  local backup="$1" dest="$2" tmp
+  tmp=$(mktemp "${dest}.XXXXXX")
+  cp -p "$backup" "$tmp"
+  mv -f "$tmp" "$dest"
+}
+# Undo the binary/unit/service.env changes. Flags and backups come from main (ROLLBACK_*).
+rollback_install() {
+  info "$1 Restoring previous binary/unit/settings where available."
+  systemctl stop "$SERVICE" </dev/null >/dev/null 2>&1 || true
+  if [[ "$ROLLBACK_HAD_BINARY" == true ]]; then restore_file "$WORKDIR/previous.binary" "$PREFIX/$APP"; else rm -f "$PREFIX/$APP"; fi
+  if [[ "$ROLLBACK_HAD_UNIT" == true ]]; then
+    restore_file "$WORKDIR/previous.service" "$UNIT_DIR/$SERVICE"
+  else
+    # Drop the enable symlink before removing the unit so nothing dangles.
+    systemctl disable "$SERVICE" </dev/null >/dev/null 2>&1 || true
+    rm -f "$UNIT_DIR/$SERVICE"
+  fi
+  if [[ "$ROLLBACK_HAD_ENV" == true ]]; then restore_file "$WORKDIR/previous.service.env" "$CONFIG_DIR/service.env"; else rm -f "$CONFIG_DIR/service.env"; fi
+  systemctl daemon-reload </dev/null || true
+  if [[ "$ROLLBACK_HAD_BINARY" == true ]]; then systemctl restart "$SERVICE" </dev/null || true; fi
 }
 
 # --- build from source -------------------------------------------------------------
@@ -493,7 +550,9 @@ main() {
   [[ -d /run/systemd/system ]] || die 'This host is not booted with systemd'
   [[ -d "$BUILD_PARENT" ]] || die "$BUILD_PARENT does not exist"
 
-  # Ask every question before the long build/download or any change to the host.
+  # Pre-flight: reject a bad saved listen address, then ask every question, all before the
+  # long build/download or any change to the host.
+  load_existing_listen
   choose_listen_port
   if [[ ! -f "$STATE_DIR/auth.json" ]]; then collect_initial_password; fi
 
@@ -505,9 +564,14 @@ main() {
   init_go_env
   prepare_source
   find_usable_go || download_go
-  local version_label old_unit=false had_binary=false staged_bin
+  local version_label staged_bin
   version_label=$(build_version)
   build_binary "$version_label"
+
+  # Back up what the rollback may need to restore, before touching anything.
+  if [[ -f "$UNIT_DIR/$SERVICE" ]]; then ROLLBACK_HAD_UNIT=true; cp -p "$UNIT_DIR/$SERVICE" "$WORKDIR/previous.service"; fi
+  if [[ -f "$PREFIX/$APP" ]]; then ROLLBACK_HAD_BINARY=true; cp -p "$PREFIX/$APP" "$WORKDIR/previous.binary"; fi
+  if [[ -f "$CONFIG_DIR/service.env" ]]; then ROLLBACK_HAD_ENV=true; cp -p "$CONFIG_DIR/service.env" "$WORKDIR/previous.service.env"; fi
 
   # The host is only modified below this line.
   install_apcupsd_if_missing
@@ -522,8 +586,6 @@ main() {
   fi
   ensure_user
   set_listen_config
-  if [[ -f "$UNIT_DIR/$SERVICE" ]]; then old_unit=true; cp -p "$UNIT_DIR/$SERVICE" "$WORKDIR/previous.service"; fi
-  if [[ -f "$PREFIX/$APP" ]]; then had_binary=true; cp -p "$PREFIX/$APP" "$WORKDIR/previous.binary"; fi
   staged_bin=$(mktemp "$PREFIX/.${APP}.XXXXXX")
   install -m 0755 "$WORKDIR/$APP" "$staged_bin"
   mv -f "$staged_bin" "$PREFIX/$APP"
@@ -535,12 +597,9 @@ main() {
   write_service
   systemctl enable "$SERVICE"
   if [[ "$SKIP_START" == false ]]; then
-    if ! systemctl restart "$SERVICE" || ! systemctl is-active --quiet "$SERVICE"; then
-      info 'Service failed to start. Restoring previous binary/unit where available.'
-      if [[ "$had_binary" == true ]]; then cp -p "$WORKDIR/previous.binary" "$PREFIX/$APP"; else rm -f "$PREFIX/$APP"; fi
-      if [[ "$old_unit" == true ]]; then cp -p "$WORKDIR/previous.service" "$UNIT_DIR/$SERVICE"; else rm -f "$UNIT_DIR/$SERVICE"; fi
-      systemctl daemon-reload
-      if [[ "$had_binary" == true ]]; then systemctl restart "$SERVICE" || true; fi
+    info 'Starting the service and watching it for a few seconds...'
+    if ! systemctl restart "$SERVICE" </dev/null || ! wait_for_service_stable; then
+      rollback_install 'Service failed to start or stay running (is the port already used by another service?).'
       die 'Service failed; check journalctl -u apc-ups-bridge.service'
     fi
   fi
