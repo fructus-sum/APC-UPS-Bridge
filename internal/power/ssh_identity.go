@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"io"
 	"os"
+	"os/user"
 	"path/filepath"
 	"strings"
 )
@@ -27,7 +28,12 @@ func ServicePublicKeys() []SSHPublicKey {
 	keys := []SSHPublicKey{}
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
-		return keys
+		// ssh itself uses the account's passwd home when HOME is unset.
+		u, uerr := user.Current()
+		if uerr != nil || u.HomeDir == "" {
+			return keys
+		}
+		home = u.HomeDir
 	}
 	for _, name := range []string{"id_ed25519.pub", "id_ecdsa.pub", "id_rsa.pub"} {
 		path := filepath.Join(home, ".ssh", name)
@@ -39,6 +45,11 @@ func ServicePublicKeys() []SSHPublicKey {
 }
 
 func readPublicKey(path string) (SSHPublicKey, bool) {
+	// Only regular files: a directory or FIFO with a key's name is ignored
+	// rather than blocking the request.
+	if fi, err := os.Stat(path); err != nil || !fi.Mode().IsRegular() {
+		return SSHPublicKey{}, false
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return SSHPublicKey{}, false

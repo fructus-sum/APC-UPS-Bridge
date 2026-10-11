@@ -61,7 +61,7 @@ The bridge treats the connection dropping during shutdown as success.
 Where the key goes depends on the host:
 
 - Usually it is `.ssh/authorized_keys` in that account's home directory.
-- Some systems use a different file, or manage keys in their own settings page.
+- Some systems use a different file, or manage keys in their own settings page. For example, some SSH servers read keys for administrator accounts from a separate system-wide file; check the host's SSH server documentation.
 - Some systems keep home directories in memory, so manual edits disappear after a reboot. Use the host's persistent method and confirm the key survives a restart.
 - SSH servers usually require the key file and its folder to be writable only by that account.
 

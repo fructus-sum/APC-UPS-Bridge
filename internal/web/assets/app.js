@@ -148,7 +148,7 @@ function addDevice(data={}){
   try{
    const response=await fetch('/api/power/test-ssh',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({id})});
    if(!response.ok)throw new Error((await response.text()).trim());
-   const result=await response.json();status.textContent=(result.status==='ready'?'✓ ':result.status==='warning'?'⚠ ':'✕ ')+result.message+(result.status==='error'?' See “SSH key for remote hosts” above for setup steps.':'');
+   const result=await response.json();status.textContent=(result.status==='ready'?'✓ ':result.status==='warning'?'⚠ ':'✕ ')+result.message+(result.status==='error'?' If the key may be the cause, see “SSH key for remote hosts” above.':'');
   }catch(e){status.textContent='Test unavailable: '+e.message+' Save this device first, then retry.';}
   finally{test.disabled=false;}
  });section.append(test,status);

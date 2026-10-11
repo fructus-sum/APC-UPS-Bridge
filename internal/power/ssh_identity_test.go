@@ -66,6 +66,10 @@ func TestServicePublicKeysRejectsOversizedAndMultiline(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(sshDir, "id_rsa.pub"), []byte("ssh-rsa AAAA\nssh-rsa AAAA\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// A directory with a key's name is not a key file.
+	if err := os.Mkdir(filepath.Join(sshDir, "id_ecdsa.pub"), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	if keys := ServicePublicKeys(); len(keys) != 0 {
 		t.Fatalf("expected no keys, got %#v", keys)
 	}
