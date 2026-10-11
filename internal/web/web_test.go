@@ -161,3 +161,16 @@ func TestDashboardAlwaysContainsFirmwareDetails(t *testing.T) {
   if !strings.Contains(w.Body.String(),value){t.Errorf("missing firmware display: %s",value)}
  }
 }
+
+func TestPiShutdownSettingsAuthorizationAndValidation(t *testing.T) {
+ h,a:=setupWeb(t)
+ body:=`{"managed":true,"battery_percent":10,"runtime_minutes":3}`
+ if w:=request(h,"POST","/api/power/host-settings",body,nil,"");w.Code!=401{t.Fatalf("unauthenticated request accepted: %d",w.Code)}
+ token,csrf,err:=a.Login("127.0.0.1","admin","long secret passphrase");if err!=nil{t.Fatal(err)}
+ cookie:=&http.Cookie{Name:"ups_bridge_session",Value:token}
+ if w:=request(h,"POST","/api/power/host-settings",body,cookie,"");w.Code!=403{t.Fatalf("CSRF bypass: %d",w.Code)}
+ if w:=request(h,"GET","/api/power/host-settings","",cookie,csrf);w.Code!=405{t.Fatalf("GET mutation allowed: %d",w.Code)}
+ if w:=request(h,"POST","/api/power/host-settings",`{"managed":true,"battery_percent":1,"runtime_minutes":3}`,cookie,csrf);w.Code!=400{t.Fatalf("invalid thresholds accepted: %d",w.Code)}
+ if w:=request(h,"POST","/api/power/host-settings",`{"managed":true,"battery_percent":10,"runtime_minutes":3,"command":"shutdown"}`,cookie,csrf);w.Code!=400{t.Fatalf("extra field accepted: %d",w.Code)}
+ if w:=request(h,"POST","/api/power/host-settings",body,cookie,csrf);w.Code!=503{t.Fatalf("missing socket should block operation: %d",w.Code)}
+}
