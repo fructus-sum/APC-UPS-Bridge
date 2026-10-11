@@ -2,6 +2,7 @@ package hostsettings
 
 import (
  "os"
+ "errors"
  "path/filepath"
  "strings"
  "testing"
@@ -28,4 +29,18 @@ func TestApplyConfigBackupAndRollback(t *testing.T){
  if len(matches)!=1{t.Fatalf("expected a backup, got %v",matches)}
  b,_:=os.ReadFile(matches[0]);if string(b)!=string(original){t.Fatal("backup mismatch")}
  if calls!=1{t.Fatalf("restart called %d times",calls)}
+}
+
+func TestApplyRestoresOnServiceRestartFailure(t *testing.T) {
+ dir:=t.TempDir();file:=filepath.Join(dir,"apcupsd.conf")
+ old:=[]byte("BATTERYLEVEL 5\nMINUTES 2\nTIMEOUT 0\n")
+ if err:=os.WriteFile(file,old,0600);err!=nil{t.Fatal(err)}
+ calls:=0
+ err:=applyConfig(file,Settings{Managed:true,BatteryPercent:15,RuntimeMinutes:4},func()error{
+  calls++;if calls==1{return errors.New("restart failed")};return nil
+ })
+ if err==nil{t.Fatal("restart failure was ignored")}
+ got,e:=os.ReadFile(file);if e!=nil{t.Fatal(e)}
+ if string(got)!=string(old){t.Fatalf("configuration not restored: %s",got)}
+ if calls!=2{t.Fatalf("expected restart and rollback restart, got %d",calls)}
 }
