@@ -90,6 +90,22 @@ async function startSettings(){
   }catch(e){feedback.textContent='Could not save: '+e.message;}
  });
 }
+function startHostSettings(){
+ const form=el('host-settings-form'),mode=el('host-setting-mode'),inputs=el('host-setting-inputs');
+ if(!form)return;
+ mode.addEventListener('change',()=>{inputs.hidden=mode.value!=='managed';el('host-settings-commands').hidden=true;});
+ form.addEventListener('submit',async event=>{
+  event.preventDefault();const feedback=el('host-settings-feedback'),code=el('host-settings-commands');
+  code.hidden=true;feedback.textContent='Validating…';
+  const settings={managed:mode.value==='managed',battery_percent:Number(el('host-setting-battery').value),runtime_minutes:Number(el('host-setting-minutes').value)};
+  try{
+   const response=await fetch('/api/power/host-settings/plan',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(settings)});
+   if(!response.ok)throw new Error((await response.text()).trim());
+   const plan=await response.json();feedback.textContent=plan.message;
+   if(plan.commands?.length){code.textContent=plan.commands.join('\n');code.hidden=false;}
+  }catch(e){feedback.textContent='Unable to prepare changes: '+e.message;}
+ });
+}
 async function refreshPowerState(){
  try {const v=await getJSON('/api/power/state');
  const text=v.enabled ? (v.active ? 'Active: '+v.phase.replaceAll('_',' ') : (v.armed?'Armed · waiting for outage':'Enabled · not yet armed')) : 'Disabled · remote actions off';
@@ -164,6 +180,6 @@ async function startPower(){
 }
 if(page==='/'){refreshDashboard();refreshFirmware();refreshRecent();refreshPowerState();setInterval(refreshDashboard,10000);setInterval(refreshFirmware,60000);setInterval(refreshRecent,60000);setInterval(refreshPowerState,10000);}
 if(page==='/events'){refreshEvents();el('range').addEventListener('change',refreshEvents);el('refresh-events').addEventListener('click',refreshEvents);}
-if(page==='/settings') startSettings();
+if(page==='/settings'){startSettings();startHostSettings();}
 
 if(page==='/power')startPower();
