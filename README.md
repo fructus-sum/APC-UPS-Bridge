@@ -12,7 +12,7 @@ APC UPS Bridge runs on a Raspberry Pi or other Linux host and reads a single APC
 - **Events and reports:** event-only monthly JSONL logs, filtered history, observed outage durations, CSV export and configurable retention. Routine poll samples are not stored.
 - **Power rules and devices:** up to 16 approved remote Linux hosts; independent remote shutdown threshold (20% battery by default), order/priority, optional Wake-on-LAN recovery, and a non-destructive **Test SSH** button for saved devices. The Pi's own shutdown remains under `apcupsd`, with its configured thresholds displayed separately. Actions are persisted across bridge restarts and power cycles.
 - **Email notifications:** configure a TLS/STARTTLS SMTP account; one-shot outage/restoration alerts and a durable final report after mains returns, the UPS reports 100% charge, and optionally monitored devices are SSH-reachable. Reports persist across bridge restarts.
-- **Firmware advisory:** read-only warning on the dashboard for recognized model/UPS-ID combinations whose installed firmware is below a dated local Schneider reference. No firmware is flashed.
+- **Firmware information and advisory:** always display reported firmware (or **Unknown**) and the separate update-check status; warn only for recognized model/UPS-ID combinations whose installed firmware is below a dated local Schneider reference. No firmware is flashed.
 - **Administration:** single administrator account, session-based login, password change, configurable polling (5–60 seconds), battery warning and log retention.
 
 See [power protection](docs/POWER-PROTECTION.md), [email delivery](docs/EMAIL-NOTIFICATIONS.md) and [firmware guidance](docs/FIRMWARE.md) for important behavior and limitations.
