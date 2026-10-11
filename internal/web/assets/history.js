@@ -29,6 +29,8 @@ function draw(root,report,series,percent){
  }
  // Highlight spans whose observed event history says the UPS is on battery.
  let started=null;
+ const firstPower=(report.events||[]).find(e=>e.type==='power_lost'||e.type==='on_battery_detected'||e.type==='power_restored');
+ if(firstPower&&firstPower.type==='power_restored')started=from;// power was already lost before the window
  for(const event of report.events||[]){
   const t=new Date(event.time).getTime();
   if(event.type==='power_lost'||event.type==='on_battery_detected'){

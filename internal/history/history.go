@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -108,11 +109,21 @@ func (s *Store) Record(snap *apc.Snapshot) error {
 	if err != nil {
 		return err
 	}
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return err
 	}
-	_, writeErr := f.Write(append(b, '\n'))
+	out := append(b, '\n')
+	torn, tornErr := needsNewline(f)
+	if tornErr != nil {
+		_ = f.Close()
+		return tornErr
+	}
+	if torn {
+		// A power cut left a partial last line; keep the new sample on its own line.
+		out = append([]byte{'\n'}, out...)
+	}
+	_, writeErr := f.Write(out)
 	closeErr := f.Close()
 	if writeErr != nil {
 		return writeErr
@@ -133,25 +144,65 @@ func clone(p *float64) *float64 {
 	x := *p
 	return &x
 }
-func lastSampleBucket(path string) (time.Time, error) {
+
+const maxLine = 8192
+
+// eachLine calls fn for every complete or trailing line of the file. Lines
+// longer than maxLine are skipped. A missing file is not an error.
+func eachLine(path string, fn func([]byte)) error {
 	f, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return time.Time{}, nil
+		return nil
 	}
 	if err != nil {
-		return time.Time{}, err
+		return err
 	}
 	defer f.Close()
-	scan := bufio.NewScanner(f)
-	scan.Buffer(make([]byte, 1024), 8192)
+	r := bufio.NewReaderSize(f, maxLine)
+	skipping := false
+	for {
+		line, err := r.ReadSlice('\n')
+		if errors.Is(err, bufio.ErrBufferFull) {
+			skipping = true
+			continue
+		}
+		if len(line) > 0 && !skipping {
+			fn(line)
+		}
+		if err == nil {
+			skipping = false
+			continue
+		}
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		return err
+	}
+}
+
+func lastSampleBucket(path string) (time.Time, error) {
 	var last time.Time
-	for scan.Scan() {
+	err := eachLine(path, func(b []byte) {
 		var v Sample
-		if json.Unmarshal(scan.Bytes(), &v) == nil && !v.Time.IsZero() {
+		if json.Unmarshal(b, &v) == nil && !v.Time.IsZero() {
 			last = v.Time.UTC().Truncate(Interval)
 		}
+	})
+	return last, err
+}
+
+// needsNewline reports whether the file is non-empty and does not end in a
+// newline, as left by an interrupted write.
+func needsNewline(f *os.File) (bool, error) {
+	st, err := f.Stat()
+	if err != nil || st.Size() == 0 {
+		return false, err
 	}
-	return last, scan.Err()
+	var last [1]byte
+	if _, err := f.ReadAt(last[:], st.Size()-1); err != nil {
+		return false, err
+	}
+	return last[0] != '\n', nil
 }
 
 // Cleanup deletes whole dated files strictly before the oldest allowed UTC day.
@@ -196,8 +247,8 @@ func (s *Store) Read(days int, now time.Time, eventDir string) (Result, error) {
 	for i := range result.Points {
 		result.Points[i].Time = start.Add(time.Duration(i) * Interval)
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	// Day files are append-only, so reading takes no lock and never blocks
+	// Record. A partially written last line is skipped by eachLine's caller.
 	items, err := os.ReadDir(s.Dir)
 	if !errors.Is(err, os.ErrNotExist) && err != nil {
 		return Result{}, err
@@ -210,39 +261,28 @@ func (s *Store) Read(days int, now time.Time, eventDir string) (Result, error) {
 	}
 	sort.Strings(files)
 	for _, name := range files {
-		f, err := os.Open(filepath.Join(s.Dir, name))
-		if err != nil {
-			return Result{}, err
-		}
-		scan := bufio.NewScanner(f)
-		scan.Buffer(make([]byte, 1024), 8192)
-		for scan.Scan() {
+		err := eachLine(filepath.Join(s.Dir, name), func(b []byte) {
 			var v Sample
-			if json.Unmarshal(scan.Bytes(), &v) != nil || v.Time.IsZero() || !valid(v.InputVolts, 0, 1000) || !valid(v.OutputVolts, 0, 1000) || !valid(v.LoadPercent, 0, 100) {
-				continue
+			if json.Unmarshal(b, &v) != nil || v.Time.IsZero() || !valid(v.InputVolts, 0, 1000) || !valid(v.OutputVolts, 0, 1000) || !valid(v.LoadPercent, 0, 100) {
+				return
 			}
 			slot := v.Time.UTC().Truncate(Interval)
 			if slot.Before(start) || slot.After(end) {
-				continue
+				return
 			}
 			idx := int(slot.Sub(start) / Interval)
 			// Keep first measured observation in the bucket; do not average through gaps.
 			if result.Points[idx].Observed {
-				continue
+				return
 			}
 			result.Points[idx].InputVolts = v.InputVolts
 			result.Points[idx].OutputVolts = v.OutputVolts
 			result.Points[idx].LoadPercent = v.LoadPercent
 			result.Points[idx].Observed = true
 			result.Samples++
-		}
-		e := scan.Err()
-		c := f.Close()
-		if e != nil {
-			return Result{}, e
-		}
-		if c != nil {
-			return Result{}, c
+		})
+		if err != nil {
+			return Result{}, err
 		}
 	}
 	if eventDir != "" {

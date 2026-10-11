@@ -39,6 +39,9 @@ func TestHistoryPageAndAPIProtected(t *testing.T) {
 	if len(data.Points) != 14*24*4+1 || data.IntervalSeconds != int((15*time.Minute).Seconds()) {
 		t.Fatalf("bad default axis: %+v", data)
 	}
+	if w = request(h, "GET", "/api/history?days=abc", "", cookie, ""); w.Code != 400 {
+		t.Fatalf("non-numeric range allowed %d", w.Code)
+	}
 	if w = request(h, "GET", "/api/history?days=31", "", cookie, ""); w.Code != 400 {
 		t.Fatalf("bad range allowed %d", w.Code)
 	}

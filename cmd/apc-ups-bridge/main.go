@@ -73,8 +73,8 @@ func run() int {
 		fmt.Println("Administrator password configured. Restart a running service after CLI password reset.")
 		return 0
 	}
-	if *interval < 5*time.Second || *interval > time.Hour || *interval%time.Second != 0 || *timeout <= 0 || *retention < 0 || *retention > 36500 {
-		fmt.Fprintln(os.Stderr, "invalid duration/retention: poll interval must be whole seconds 5–3600; timeout positive; retention 0–36500")
+	if *interval < 5*time.Second || *interval > time.Minute || *interval%time.Second != 0 || *timeout <= 0 || *retention < 0 || *retention > 36500 {
+		fmt.Fprintln(os.Stderr, "invalid duration/retention: poll interval must be whole seconds 5–60; timeout positive; retention 0–36500")
 		return 2
 	}
 	logger := log.New(os.Stderr, "apc-ups-bridge: ", log.LstdFlags|log.LUTC)
@@ -202,8 +202,13 @@ func run() int {
 	go mailEngine.Run(ctx, emailUpdates, func(err error) { logger.Printf("email report state: %v", err) })
 	lastPollError := false
 	lastPowerError := false
+	lastHistoryError := false
 	poll := func() {
 		err := mon.Poll(ctx)
+		if ctx.Err() != nil {
+			// Stopping: the monitor snapshot is stale, so never act on it.
+			return
+		}
 		if err != nil && ctx.Err() == nil && !lastPollError {
 			logger.Printf("UPS poll error (repeats suppressed): %v", err)
 		}
@@ -212,14 +217,12 @@ func run() int {
 		}
 		lastPollError = err != nil
 		status := mon.Snapshot()
-		if err != nil {
-			status.Healthy = false
-			status.Current = nil
-		}
-		if status.Healthy && status.Current != nil {
-			if sampleErr := historyStore.Record(status.Current); sampleErr != nil {
-				logger.Printf("history sample: %v", sampleErr)
+		if err == nil && status.Healthy && status.Current != nil {
+			sampleErr := historyStore.Record(status.Current)
+			if sampleErr != nil && !lastHistoryError {
+				logger.Printf("history sample error (repeats suppressed): %v", sampleErr)
 			}
+			lastHistoryError = sampleErr != nil
 		}
 		automationErr := powerController.Observe(ctx, status)
 		if automationErr != nil && ctx.Err() == nil && !lastPowerError {

@@ -6,6 +6,7 @@ import (
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/events"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -67,9 +68,8 @@ func TestEventTimesNoMadeUpMetrics(t *testing.T) {
 	if got.From.Add(14*24*time.Hour) != got.To {
 		t.Fatal("time axis not fixed")
 	}
-	b, _ := json.Marshal(got.Points[0])
-	if string(b) == "" || got.Points[0].Observed {
-		t.Fatal("missing bucket not rendered")
+	if got.Points[0].Observed {
+		t.Fatal("missing bucket rendered as observed")
 	}
 }
 func TestRetentionAndValidation(t *testing.T) {
@@ -86,6 +86,14 @@ func TestRetentionAndValidation(t *testing.T) {
 	if err != nil || n != 1 {
 		t.Fatalf("cleanup %d %v", n, err)
 	}
+	for _, age := range []int{29, 1} {
+		if _, err := os.Stat(filepath.Join(dir, filename(now.AddDate(0, 0, -age)))); err != nil {
+			t.Fatalf("recent file %d days old removed: %v", age, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, filename(now.AddDate(0, 0, -35)))); !os.IsNotExist(err) {
+		t.Fatalf("old file survived: %v", err)
+	}
 	for _, days := range []int{0, 31, -1, 100} {
 		if _, err := s.Read(days, now, ""); err == nil {
 			t.Fatal("accepted bad range")
@@ -94,5 +102,69 @@ func TestRetentionAndValidation(t *testing.T) {
 	snap := &apc.Snapshot{ObservedAt: now, LoadPercent: number(101)}
 	if err := s.Record(snap); err == nil {
 		t.Fatal("accepted invalid percentage")
+	}
+}
+
+func TestTornLastLineThenRecord(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now().UTC().Add(-2 * time.Hour).Truncate(Interval).Add(time.Minute)
+	prev := now.Add(-Interval)
+	path := filepath.Join(dir, filename(now))
+	good, _ := json.Marshal(Sample{Time: prev, InputVolts: number(229)})
+	torn := string(good) + "\n" + `{"time":"` + prev.Add(-Interval).Format(time.RFC3339) + `","input_vo`
+	if err := os.WriteFile(path, []byte(torn), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s := New(dir)
+	if err := s.Record(&apc.Snapshot{ObservedAt: now, InputVolts: number(231)}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Read(1, now.Add(time.Minute), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Samples != 2 {
+		t.Fatalf("expected the old and new sample, got %d", got.Samples)
+	}
+	found := false
+	for _, p := range got.Points {
+		if p.Observed && p.InputVolts != nil && *p.InputVolts == 231 && p.Time.Equal(now.Truncate(Interval)) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("new sample not readable after torn line")
+	}
+}
+
+func TestCorruptAndOversizeLinesSkipped(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now().UTC().Add(-2 * time.Hour).Truncate(Interval).Add(time.Minute)
+	prev := now.Add(-Interval)
+	path := filepath.Join(dir, filename(now))
+	good, _ := json.Marshal(Sample{Time: prev, InputVolts: number(229)})
+	content := "not json\n" + strings.Repeat("x", 3*maxLine) + "\n" + string(good) + "\n"
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s := New(dir)
+	got, err := s.Read(1, now, "")
+	if err != nil || got.Samples != 1 {
+		t.Fatalf("read with bad lines: samples=%d err=%v", got.Samples, err)
+	}
+	if err := s.Record(&apc.Snapshot{ObservedAt: now, InputVolts: number(231)}); err != nil {
+		t.Fatalf("record with bad lines: %v", err)
+	}
+	got, err = s.Read(1, now, "")
+	if err != nil || got.Samples != 2 {
+		t.Fatalf("after record: samples=%d err=%v", got.Samples, err)
+	}
+}
+
+func TestReadMissingDirectory(t *testing.T) {
+	s := New(filepath.Join(t.TempDir(), "absent"))
+	got, err := s.Read(7, time.Now(), "")
+	if err != nil || got.Samples != 0 {
+		t.Fatalf("missing dir: samples=%d err=%v", got.Samples, err)
 	}
 }
