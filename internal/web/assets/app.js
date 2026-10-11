@@ -104,12 +104,35 @@ function addDevice(data={}){
  const fields=document.createElement('div');fields.className='device-fields';section.append(fields);
  const spec=[['Device ID','id','text',data.id||'node-'+Math.random().toString(36).slice(2,8)],['Friendly name','name','text',data.name||''],['IP or hostname','host','text',data.host||''],['SSH user','ssh_user','text',data.ssh_user||'root'],['SSH port','ssh_port','number',data.ssh_port??22],['Shutdown priority','priority','number',data.priority??0],['MAC address','mac','text',data.mac||''],['Wake destination IP','wake_address','text',data.wake_address||'255.255.255.255'],['Wake UDP port','wake_port','number',data.wake_port??9],['Use sudo -n','use_sudo','checkbox',data.use_sudo||false],['Allow automatic shutdown','shutdown_enabled','checkbox',data.shutdown_enabled||false],['Allow wake after shutdown','wake_enabled','checkbox',data.wake_enabled||false]];
  for(const [label,key,type,val] of spec)powerField(fields,label,key,val,type);
+ const test=document.createElement('button');test.type='button';test.className='secondary';test.textContent='Test SSH (no shutdown)';
+ const status=document.createElement('p');status.className='feedback';status.setAttribute('role','status');
+ test.addEventListener('click',async()=>{
+  const id=section.querySelector('[data-key="id"]').value;
+  test.disabled=true;status.textContent='Checking saved SSH connection…';
+  try{
+   const response=await fetch('/api/power/test-ssh',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({id})});
+   if(!response.ok)throw new Error((await response.text()).trim());
+   const result=await response.json();status.textContent=(result.status==='ready'?'✓ ':result.status==='warning'?'⚠ ':'✕ ')+result.message;
+  }catch(e){status.textContent='Test unavailable: '+e.message+' Save this device first, then retry.';}
+  finally{test.disabled=false;}
+ });section.append(test,status);
  root.append(section);
 }
 function collectDevices(){return Array.from(el('device-list').querySelectorAll('.device')).map(section=>{
  const d={};for(const input of section.querySelectorAll('[data-key]'))d[input.dataset.key]=input.type==='checkbox'?input.checked:input.type==='number'?Number(input.value):input.value.trim();return d;
 });}
+async function loadHostThresholds(){
+ try{
+  const r=await getJSON('/api/power/host-thresholds');
+  const n=(v,unit)=>typeof v==='number'?(v===0?'Disabled':'At '+v+unit):'Not configured / unknown';
+  el('host-shutdown-battery').textContent=n(r.battery_percent,'%');
+  el('host-shutdown-runtime').textContent=n(r.runtime_minutes,' minutes');
+  el('host-shutdown-timer').textContent=n(r.timeout_seconds,' seconds on battery');
+  if(!r.available)el('host-shutdown-note').textContent='Could not read apcupsd.conf from the Bridge service. Check the Pi configuration directly; remote rules below are separate.';
+ }catch(e){el('host-shutdown-note').textContent='Could not read Pi shutdown settings. Remote rules below are separate.';}
+}
 async function startPower(){
+ loadHostThresholds();
  const feedback=el('power-feedback');
  try{const v=await getJSON('/api/power');
  el('power-enabled').checked=v.enabled;el('shutdown-percent').value=v.shutdown_battery_percent;el('shutdown-runtime').value=v.shutdown_runtime_minutes;
