@@ -1,48 +1,75 @@
-# Installation, upgrades and recovery (Phase 5)
+# Installation, upgrades and recovery
 
-> **Pre-release warning:** No ready-to-install GitHub release exists until a version tag has been published and the release workflow succeeds. This is not yet qualified for live power protection. Test using real hardware before enabling remote actions or native host shutdown.
+> **Hardware caveat:** this is a development preview. The installer builds on and has been reasoned about for Raspberry Pi OS / Debian, but test it, and above all remote shutdown, on your own hardware before depending on it for live power protection.
 
-APC UPS Bridge runs as one unprivileged Go process on a **systemd-based Linux host** with an **APC USB UPS supported by apcupsd**. Runtime needs no Go toolchain, web framework, database, Docker container, or cloud account.
+APC UPS Bridge runs as one unprivileged Go process on a **systemd-based Linux host** with an **APC USB UPS supported by apcupsd**. The runtime needs no Go toolchain, web framework, database, Docker container, or cloud account. There are no GitHub releases: the installer builds the binary from source on the box.
 
-## Supported architectures and requirements
+## Install
 
-Pre-built release archives: linux/amd64 (PC), linux/arm64 (64-bit Pi), linux/armv7 (32-bit Pi 2/3/4 etc.), linux/armv6 (Pi 1/Zero). Kernel, OS and USB compatibility must still be verified on the chosen hardware. The installer checks `uname -m`, requires `systemd` and basic tools (`curl`, `sha256sum`, `tar`, `awk`, `runuser`, etc.) and uses the system package manager to install `apcupsd` **only if `apcaccess` is absent**. Automatic `apcupsd` package installation is supported for apt, dnf and zypper systems; otherwise install `apcupsd` manually before running it. The installer leaves other existing USB/UPS services alone.
-
-## New installation
-
-Download and inspect the installer before running it with administrative privileges:
+One command (works once the repository is public):
 
 ```bash
-curl -fL https://raw.githubusercontent.com/fructus-sum/APC-UPS-Bridge/main/scripts/install.sh -o install.sh
-less install.sh
-sudo bash install.sh --version v0.1.0
+curl -fsSL https://raw.githubusercontent.com/fructus-sum/APC-UPS-Bridge/main/scripts/install.sh | sudo bash
 ```
 
-Replace `v0.1.0` with an **actually published GitHub release**; omit `--version` for the latest published release. Enter and confirm a strong administrator password when prompted. On a new **interactive** installation, the installer also asks which web interface port to use. Press Enter to accept **8080**, or enter a port between **1 and 65535**. The interface still binds to **127.0.0.1** by default, so it is not reachable from other LAN computers. An existing installation keeps its prior address and port automatically. Unattended installations default to 8080 unless an explicit `--listen` address is provided.
-
-On a clean Pi with an **APC USB UPS** and no configured apcupsd instance, the explicit setup option backs up and configures the UPS daemon for USB/NIS localhost access:
+While the repository is private, clone it (you need a GitHub login) and run the installer from the checkout:
 
 ```bash
-sudo bash install.sh --configure-apcupsd
+git clone https://github.com/fructus-sum/APC-UPS-Bridge.git && cd APC-UPS-Bridge && sudo bash scripts/install.sh
 ```
 
-Do not use `--configure-apcupsd` if the host is managing additional UPS units or has an apcupsd configuration that must remain untouched. It changes the apcupsd USB mode, NIS listener to `127.0.0.1:3551`, and on Debian-like systems enables `ISCONFIGURED=yes`. The existing `BATTERYLEVEL`, `MINUTES` and `TIMEOUT` settings are retained unless `--host-protection` is explicitly requested. Prior config copies use `.backup-YYYYMMDDTHHMMSSZ` suffixes.
+Prefer to read it first? Download `scripts/install.sh`, skim it, and run `sudo bash install.sh`. Run from a file outside a checkout it fetches the source itself, same as the piped version.
 
-To skip the port prompt or explicitly select a binding, supply `--listen`, for example `--listen 127.0.0.1:9090`. To deliberately expose the interface on the private LAN:
+### What it does
+
+1. Asks the questions up front, before anything slow or invasive: web port (default **8080**) and a new administrator password (twice, at least 12 characters). Questions are read from the terminal (`/dev/tty`), which is why the piped one-liner can still prompt.
+2. Gets the source: the checkout it was run from, or a download of the `main` branch (`--branch NAME` for another).
+3. Finds a Go 1.22+ toolchain. If there is none, it downloads the current official Go for your CPU from go.dev / dl.google.com, verifying its SHA-256. The toolchain is temporary.
+4. Builds the binary (`CGO_ENABLED=0`, no third-party modules) in a scratch directory under `/var/tmp`. **A small Pi can take several minutes**, and a download plus build may need a few hundred MB of free disk. Everything in the scratch directory, including any downloaded Go, is deleted when the installer exits. Go is never left installed.
+5. Installs `apcupsd` with apt, dnf or zypper if `apcaccess` is missing. On that fresh install it also configures apcupsd for a USB UPS (details below) and checks that `apcaccess status` answers.
+6. Creates the `apc-ups-bridge` service user, installs the binary to `/usr/local/bin`, writes the hardened systemd unit, enables it at boot and starts it.
+7. Installs the uninstaller as `/usr/local/sbin/apc-ups-bridge-uninstall`, then prints the URL(s), e.g. `Open http://192.168.1.20:8080/`.
+
+Supported CPUs are x86-64, 64-bit ARM, and 32-bit ARM (a 32-bit Raspberry Pi OS is detected even on a 64-bit kernel). Other architectures stop with an error before building. The Go toolchain download needs a working internet connection; with a recent Go already installed, only the source download is needed (none at all when run from a checkout).
+
+### Network access
+
+The web interface is served on **all interfaces** (`0.0.0.0:<port>`) so you can open it from any device on your LAN. It is **plain HTTP**: the administrator password and session cookie cross your network unencrypted. Keep it on a trusted home network, **never port-forward it to the internet**, and use a VPN or a local HTTPS reverse proxy for anything remote. The installer does not change firewall rules.
+
+- Pick another port at the prompt, or pass `--listen 192.168.1.20:9090` to bind one address. `--listen 127.0.0.1:8080` keeps it host-only (then put a reverse proxy in front).
+- Upgrades keep the existing `/etc/apc-ups-bridge/service.env` binding unless you give `--listen`. An install made by an earlier version that is bound to `127.0.0.1` stays that way until you re-run with `--listen 0.0.0.0:8080`.
+- The URL hints come from `hostname -I`; if it is unavailable the installer prints `http://<this-host-ip>:8080/`.
+
+### Options
+
+```text
+--branch NAME           branch to build when not run from a checkout (default main)
+--listen HOST:PORT      web binding (default 0.0.0.0:8080)
+--configure-apcupsd     back up and configure an existing apcupsd for a local USB UPS
+--skip-apcupsd-setup    do not auto-configure an apcupsd the installer just installed
+--host-protection       with --configure-apcupsd: native host shutdown at 10% battery or 3 minutes
+--password-stdin        read the initial admin password from stdin (one line)
+--non-interactive       never prompt; first install then requires --password-stdin
+--skip-start            install and enable, but do not start now
+```
+
+Options after a pipe go through `bash -s --`, for example `curl -fsSL .../install.sh | sudo bash -s -- --branch develop`.
+
+For unattended first-time installation, save the script (or use a checkout) and pipe the password in. Do not pass it as an argument or environment variable. `--password-stdin` cannot be combined with `curl | bash`, because stdin is the script:
 
 ```bash
-sudo bash install.sh --listen 0.0.0.0:8080
+printf '%s\n' "$PASSWORD_FROM_YOUR_SECRET_MANAGER" | sudo bash scripts/install.sh --non-interactive --password-stdin
 ```
 
-**Security:** The current web server uses unencrypted HTTP. Do not port-forward it or expose it to untrusted networks. Use a VPN or a TLS reverse proxy to protect administrator credentials. For a remote HTTPS proxy, prefer localhost listening and proxy locally. The installer does not change firewall rules or open other network-facing ports.
+The password is only requested on the first install. On later runs `--password-stdin` is ignored if a password hash already exists.
 
-For unattended first-time installation, pipe the initial password over standard input using a secret-handling mechanism (not a command argument or environment variable):
+## apcupsd setup
 
-```bash
-printf '%s\n' "$PASSWORD_FROM_YOUR_SECRET_MANAGER" | sudo bash install.sh --non-interactive --password-stdin
-```
+- **Fresh install** (the installer had to install `apcupsd`, and this is a first Bridge install: no `/etc/apc-ups-bridge/service.env`, no installed binary): it backs up `apcupsd.conf` and sets `UPSCABLE usb`, `UPSTYPE usb`, an empty `DEVICE`, `NETSERVER on` and `NISIP 127.0.0.1`, sets `ISCONFIGURED=yes` in `/etc/default/apcupsd` where present, enables and restarts the service, then tries `apcaccess status` up to three times. If no `STATUS` answer appears (UPS unplugged, wrong model, `COMMLOST`) it prints a warning and carries on. It never fails the install.
+- **Existing apcupsd, or an upgrade**: left completely alone.
+- `--skip-apcupsd-setup` suppresses the automatic step. `--configure-apcupsd` forces it even for a pre-installed apcupsd (do not use it if the host manages other UPS units). The two flags cannot be combined.
 
-On subsequent upgrades, the password is not requested or reset, and `--password-stdin` is ignored if a password hash already exists.
+Backups are written next to the originals as `.backup-YYYYMMDDTHHMMSSZ-N`. `BATTERYLEVEL`, `MINUTES` and `TIMEOUT` are retained unless `--host-protection` is given.
 
 ## Linux host / Raspberry Pi self-protection
 
@@ -51,7 +78,7 @@ APC UPS Bridge **does not run a second local shutdown controller**. Use native `
 To opt into the installer setting the **local host** thresholds at **10% battery OR 3 minutes estimated runtime**, use:
 
 ```bash
-sudo bash install.sh --configure-apcupsd --host-protection
+sudo bash scripts/install.sh --configure-apcupsd --host-protection
 ```
 
 This backs up the config and sets `BATTERYLEVEL 10`, `MINUTES 3`, and `TIMEOUT 0`, then restarts apcupsd. **These are active host shutdown thresholds** and could stop the Pi during an outage. Choose thresholds suitable for the UPS and allow enough time for configured remote SSH shutdowns to finish. Inspect `/etc/apcupsd/apcupsd.conf` before relying on it. A default or previously configured `apcupsd` instance may already have local shutdown rules active even if this flag is never used. Do not assume the host has no shutdown policy.
@@ -65,7 +92,7 @@ systemctl status apcupsd.service
 apcaccess status
 ```
 
-The systemd service runs as a dedicated `apc-ups-bridge` account and is enabled at boot. The binary is at `/usr/local/bin/apc-ups-bridge`; system configuration at `/etc/apc-ups-bridge`; password and power state at `/var/lib/apc-ups-bridge`; and event-only JSONL logs at `/var/log/apc-ups-bridge`. Regular readings remain in RAM. The unit uses systemd sandboxing and write access only to these three directories. If changing the bind address later, run `sudo bash install.sh --listen 127.0.0.1:9090` to update it and restart.
+The systemd service runs as a dedicated `apc-ups-bridge` account and is enabled at boot. The binary is at `/usr/local/bin/apc-ups-bridge`; system configuration at `/etc/apc-ups-bridge`; password and power state at `/var/lib/apc-ups-bridge`; and event-only JSONL logs at `/var/log/apc-ups-bridge`. Regular readings remain in RAM. The unit uses systemd sandboxing and write access only to these three directories. To change the bind address later, run the installer again with `--listen`.
 
 ### SSH for approved remote shutdowns
 
@@ -73,23 +100,19 @@ Create a limited-purpose SSH identity **for the `apc-ups-bridge` service user** 
 
 ## Updates and rollback
 
-On an already-configured device, download the current installer again, inspect it, and run:
-
-```bash
-sudo bash install.sh --version v0.1.1
-```
-
-Release archives are matched against SHA-256 sums from the same GitHub release, and extracted as one named executable. The upgrade keeps service login, SSH identity, remote device rules, event logs and previous power state. Existing apcupsd configuration is *not touched* unless `--configure-apcupsd` is supplied. If the replacement service fails immediately, the installer attempts to restore the previous binary/service unit and restart it. As with any automated process, this is not a substitute for a full backup or UPS dry-run.
+Run the install command again (the one-liner, or `git pull && sudo bash scripts/install.sh` in a checkout). It rebuilds from source and swaps the binary. The upgrade keeps the service login, SSH identity, remote device rules, event logs, power state and the existing listen address. Existing apcupsd configuration is *not touched* unless `--configure-apcupsd` is supplied. If the replacement service fails to start, the installer restores the previous binary and unit and restarts it. As with any automated process, this is not a substitute for a full backup or UPS dry-run.
 
 ## Uninstall
 
 ```bash
-sudo bash scripts/uninstall.sh
+curl -fsSL https://raw.githubusercontent.com/fructus-sum/APC-UPS-Bridge/main/scripts/uninstall.sh | sudo bash
 # Only when permanently discarding credentials, settings and all event history:
-sudo bash scripts/uninstall.sh --purge
+curl -fsSL https://raw.githubusercontent.com/fructus-sum/APC-UPS-Bridge/main/scripts/uninstall.sh | sudo bash -s -- --purge
 ```
 
-Uninstall does not remove `apcupsd` or change its UPS self-protection settings. With no `--purge`, sensitive state and logs remain available for reinstallation.
+The installer also leaves a local copy: `sudo apc-ups-bridge-uninstall` or `sudo apc-ups-bridge-uninstall --purge`. From a checkout, `sudo bash scripts/uninstall.sh` works too. It is safe to run when parts are already gone, and it removes the service, unit, binary and the uninstaller itself.
+
+Uninstall does not remove `apcupsd`, its configuration, its `.backup-*` copies, or its UPS self-protection settings. With no `--purge`, sensitive state and logs remain available for reinstallation. `--purge` also deletes `/etc/apc-ups-bridge`, `/var/lib/apc-ups-bridge`, `/var/log/apc-ups-bridge` and the service user.
 
 ## Developer build
 
@@ -98,7 +121,7 @@ go test ./...
 go test -race ./...
 go vet ./...
 bash scripts/test-install.sh
-bash scripts/build-release.sh v0.1.0 ./dist
+go build -o apc-ups-bridge ./cmd/apc-ups-bridge
 ```
 
-GitHub Actions runs tests on pull requests and publishes checksummed cross-compiled archives when a `vX.Y.Z` tag is pushed. Releasing must wait until hardware validation and a security review are complete.
+GitHub Actions runs the Go and installer tests on pull requests. The installer test suite is unprivileged and changes nothing on the host.

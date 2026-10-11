@@ -45,3 +45,24 @@ func TestSettingsPersistenceAndValidation(t *testing.T) {
 		t.Fatal("failed update mutated live settings")
 	}
 }
+
+func TestOldLongPollIntervalIsClampedOnLoad(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	if err := os.WriteFile(path, []byte(`{"poll_interval_seconds":3600,"low_battery_percent":15,"retention_days":30}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := Open(path, Settings{PollIntervalSeconds: 10, LowBatteryPercent: 20, RetentionDays: 365}, nil)
+	if err != nil {
+		t.Fatalf("older settings file must still load: %v", err)
+	}
+	want := Settings{PollIntervalSeconds: 60, LowBatteryPercent: 15, RetentionDays: 30}
+	if store.Get() != want {
+		t.Fatalf("got %+v, want %+v", store.Get(), want)
+	}
+	if err = store.Save(Settings{PollIntervalSeconds: 61, LowBatteryPercent: 15, RetentionDays: 30}); err == nil {
+		t.Fatal("interval above 60 seconds accepted on save")
+	}
+	if err = store.Save(Settings{PollIntervalSeconds: 60, LowBatteryPercent: 15, RetentionDays: 30}); err != nil {
+		t.Fatal(err)
+	}
+}

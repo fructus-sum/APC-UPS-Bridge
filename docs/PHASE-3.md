@@ -43,7 +43,7 @@ For API queries: `days=0` means all retained history; accepted range 0–36500. 
 - Login attempts are limited per network address. Settings changes and password changes require a per-session CSRF token.
 - Security headers prevent framing, reduce content-type sniffing and disallow external JS/CSS resources. The interface loads no CDN assets.
 - LAN HTTP remains unencrypted. Terminate HTTPS at a trusted proxy or tunnel if remote clients are used.
-- TCP web-port selection, CLI reset of admin password, and the `apcaccess` command path currently require process restart. Monitoring threshold, poll interval and retention update live.
+- TCP web-port selection, CLI reset of admin password, and the `apcaccess` command path currently require process restart. Monitoring threshold, poll interval (5-60 s) and retention update live.
 - Event history is read on demand, bounded to 500 returned records. It is not a time-series database. An incomplete outage or communication interruption does not yield guessed downtime.
 - This release does not provide actual remote SSH shutdown, Wake-on-LAN recovery, a systemd service or UPS firmware updating.
 

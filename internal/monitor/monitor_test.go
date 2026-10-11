@@ -185,3 +185,93 @@ func TestSnapshotCannotMutateCachedReadings(t *testing.T) {
 		t.Fatal("snapshot mutated internal state")
 	}
 }
+
+func TestStoppingServiceIsNotCommunicationLoss(t *testing.T) {
+	src := &source{samples: []sample{{"ONLINE", pct(100), nil}, {"", nil, context.Canceled}}}
+	rec := &recorder{}
+	mon, _ := New(src, rec, 20)
+	if err := mon.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	before := mon.Snapshot()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := mon.Poll(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("want context cancellation, got %v", err)
+	}
+	after := mon.Snapshot()
+	if !after.Healthy || after.Current == nil || after.Error != "" || !after.CheckedAt.Equal(before.CheckedAt) {
+		t.Fatalf("status changed during shutdown: %+v", after)
+	}
+	if len(rec.items) != 0 {
+		t.Fatalf("shutdown logged events: %+v", rec.items)
+	}
+}
+
+type failingWriter struct {
+	fail  bool
+	items []events.Event
+}
+
+func (w *failingWriter) Write(e events.Event) error {
+	if w.fail {
+		return errors.New("disk full")
+	}
+	w.items = append(w.items, e)
+	return nil
+}
+
+func TestEventWriteFailureDoesNotSkipBookkeeping(t *testing.T) {
+	src := &source{samples: []sample{
+		{"ONLINE", pct(100), nil},
+		{"ONBATT", pct(10), nil},
+		{"ONBATT", pct(8), nil},
+		{"ONLINE", pct(9), nil},
+	}}
+	w := &failingWriter{}
+	mon, _ := New(src, w, 20)
+	if err := mon.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	w.fail = true
+	err := mon.Poll(context.Background())
+	if err == nil || err.Error() != "disk full" {
+		t.Fatalf("first write error must be returned, got %v", err)
+	}
+	st := mon.Snapshot()
+	if !st.Healthy || st.Current == nil || st.Current.Power != apc.OnBattery || st.Error != "" {
+		t.Fatalf("good reading hidden by event failure: %+v", st)
+	}
+	if mon.prior != apc.OnBattery || mon.outageAt.IsZero() || !mon.low || mon.lowest == nil || *mon.lowest != 10 {
+		t.Fatalf("state skipped: prior=%v outage=%v low=%v lowest=%v", mon.prior, mon.outageAt, mon.low, mon.lowest)
+	}
+	// Disk recovers: the outage is not re-announced, but the restoration is logged.
+	w.fail = false
+	if err = mon.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err = mon.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(w.items) != 1 || w.items[0].Type != "power_restored" {
+		t.Fatalf("unexpected events: %+v", w.items)
+	}
+	if got := w.items[0].Details["lowest_observed_battery_percent"]; got != 8.0 {
+		t.Fatalf("lowest battery lost: %v", got)
+	}
+}
+
+func TestCommunicationLostWriteFailureIsRetried(t *testing.T) {
+	src := &source{samples: []sample{{"", nil, errors.New("offline")}, {"", nil, errors.New("offline")}}}
+	w := &failingWriter{fail: true}
+	mon, _ := New(src, w, 20)
+	err := mon.Poll(context.Background())
+	if err == nil || mon.Snapshot().Healthy || !mon.gap {
+		t.Fatalf("err=%v", err)
+	}
+	w.fail = false
+	_ = mon.Poll(context.Background())
+	if len(w.items) != 1 || w.items[0].Type != "ups_communication_lost" {
+		t.Fatalf("event not retried: %+v", w.items)
+	}
+}

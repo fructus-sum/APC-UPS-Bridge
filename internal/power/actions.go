@@ -2,10 +2,12 @@ package power
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os/exec"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -33,9 +35,24 @@ func (e LinuxExecutor) Shutdown(ctx context.Context, d Device) error {
 	}
 	cmd := exec.CommandContext(ctx, path, args...)
 	if output, err := cmd.CombinedOutput(); err != nil {
+		code := -1
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			code = exitErr.ExitCode()
+		}
+		if sshShutdownDropped(code, output) {
+			return nil
+		}
 		return fmt.Errorf("SSH shutdown failed: %w (%s)", err, limitedOutput(output))
 	}
 	return nil
+}
+
+// sshShutdownDropped reports whether an ssh failure is the host closing the
+// session because it is already shutting down: ssh exits with 255 and prints
+// "closed by remote host" when the connection disappears under a running command.
+func sshShutdownDropped(exitCode int, output []byte) bool {
+	return exitCode == 255 && strings.Contains(strings.ToLower(string(output)), "closed by remote host")
 }
 func limitedOutput(b []byte) string {
 	if len(b) > 300 {

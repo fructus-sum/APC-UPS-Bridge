@@ -71,8 +71,8 @@ func run() int {
 		fmt.Println("Administrator password configured. Restart a running service after CLI password reset.")
 		return 0
 	}
-	if *interval < 5*time.Second || *interval > time.Hour || *interval%time.Second != 0 || *timeout <= 0 || *retention < 0 || *retention > 36500 {
-		fmt.Fprintln(os.Stderr, "invalid duration/retention: poll interval must be whole seconds 5–3600; timeout positive; retention 0–36500")
+	if *interval < 5*time.Second || *interval > time.Minute || *interval%time.Second != 0 || *timeout <= 0 || *retention < 0 || *retention > 36500 {
+		fmt.Fprintln(os.Stderr, "invalid duration/retention: poll interval must be whole seconds 5–60; timeout positive; retention 0–36500")
 		return 2
 	}
 	logger := log.New(os.Stderr, "apc-ups-bridge: ", log.LstdFlags|log.LUTC)
@@ -205,10 +205,6 @@ func run() int {
 		}
 		lastPollError = err != nil
 		status := mon.Snapshot()
-		if err != nil {
-			status.Healthy = false
-			status.Current = nil
-		}
 		automationErr := powerController.Observe(ctx, status)
 		if automationErr != nil && ctx.Err() == nil && !lastPowerError {
 			logger.Printf("power automation error (repeats suppressed): %v", automationErr)

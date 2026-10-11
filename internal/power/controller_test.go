@@ -158,7 +158,7 @@ func TestBootingIntoOutageWillNotShutdown(t *testing.T) {
 		t.Fatal("should act after previously observing a healthy online state")
 	}
 }
-func TestFailureNoRetryOrWake(t *testing.T) {
+func TestFailureNoEarlyRetryOrWake(t *testing.T) {
 	store, path := configured(t)
 	w := &memoryWriter{}
 	f := &fakeExecutor{failShutdown: true}
@@ -171,7 +171,7 @@ func TestFailureNoRetryOrWake(t *testing.T) {
 	c = makeController(t, store, path, w, f, &now)
 	observe(t, c, sample(apc.OnBattery, 10))
 	if len(f.shutdowns) != 1 {
-		t.Fatal("failed command retried")
+		t.Fatal("failed command retried before the retry delay")
 	}
 	observe(t, c, sample(apc.Online, 80))
 	now = now.Add(31 * time.Second)
@@ -250,13 +250,13 @@ func TestUnsafeStateAndStorageFailureBlockActions(t *testing.T) {
 	if err := c.Observe(context.Background(), sample(apc.OnBattery, 15)); err == nil {
 		t.Fatal("log failure hidden")
 	}
-	if len(f.shutdowns) != 0 {
-		t.Fatal("acted without audit logging")
+	if len(f.shutdowns) != 1 {
+		t.Fatal("event log failure must not prevent the shutdown")
 	}
 	w.fail = false
 	observe(t, c, sample(apc.OnBattery, 15))
-	if len(f.shutdowns) != 0 {
-		t.Fatal("retry despite persisted intent")
+	if len(f.shutdowns) != 1 {
+		t.Fatal("repeated shutdown of an accepted host")
 	}
 }
 func TestConfigValidation(t *testing.T) {
@@ -377,5 +377,286 @@ func TestMissingBatteryDoesNotWake(t *testing.T) {
 	observe(t, c, s)
 	if len(f.wakes) != 0 {
 		t.Fatal("woke with missing battery charge")
+	}
+}
+
+func countEvents(w *memoryWriter, typ string) int {
+	n := 0
+	for _, e := range w.events {
+		if e.Type == typ {
+			n++
+		}
+	}
+	return n
+}
+
+// triggerShutdown arms the controller, starts an outage and delivers the first
+// low-battery reading, which makes the first shutdown attempt.
+func triggerShutdown(t *testing.T, c *Controller, now *time.Time) {
+	t.Helper()
+	observe(t, c, sample(apc.Online, 100))
+	observe(t, c, sample(apc.OnBattery, 100))
+	*now = now.Add(11 * time.Second)
+	observe(t, c, sample(apc.OnBattery, 15))
+}
+
+func TestShutdownRetrySucceedsOnSecondAttempt(t *testing.T) {
+	store, path := configured(t)
+	w := &memoryWriter{}
+	f := &fakeExecutor{failShutdown: true}
+	now := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
+	c := makeController(t, store, path, w, f, &now)
+	triggerShutdown(t, c, &now)
+	if len(f.shutdowns) != 1 {
+		t.Fatalf("first attempt count %d", len(f.shutdowns))
+	}
+	f.failShutdown = false
+	now = now.Add(30 * time.Second)
+	observe(t, c, sample(apc.OnBattery, 15))
+	if len(f.shutdowns) != 2 {
+		t.Fatalf("retry count %d", len(f.shutdowns))
+	}
+	a := c.View().Actions["node-1"]
+	if !a.ShutdownAccepted || a.ShutdownAttempts != 2 {
+		t.Fatalf("unexpected action state %+v", a)
+	}
+	// An accepted shutdown is never repeated.
+	now = now.Add(5 * time.Minute)
+	observe(t, c, sample(apc.OnBattery, 10))
+	if len(f.shutdowns) != 2 {
+		t.Fatal("accepted shutdown repeated")
+	}
+	if countEvents(w, "remote_shutdown_failed") != 1 || countEvents(w, "remote_shutdown_accepted") != 1 {
+		t.Fatal("missing shutdown result events")
+	}
+	// The retried host still qualifies for automatic wake after recovery.
+	observe(t, c, sample(apc.Online, 100))
+	now = now.Add(31 * time.Second)
+	observe(t, c, sample(apc.Online, 100))
+	if len(f.wakes) != 1 {
+		t.Fatalf("wake count %d", len(f.wakes))
+	}
+}
+
+func TestNoShutdownRetryBeforeDelay(t *testing.T) {
+	store, path := configured(t)
+	w := &memoryWriter{}
+	f := &fakeExecutor{failShutdown: true}
+	now := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
+	c := makeController(t, store, path, w, f, &now)
+	triggerShutdown(t, c, &now)
+	now = now.Add(29 * time.Second)
+	observe(t, c, sample(apc.OnBattery, 15))
+	if len(f.shutdowns) != 1 {
+		t.Fatalf("retried before delay: %d", len(f.shutdowns))
+	}
+	now = now.Add(time.Second)
+	observe(t, c, sample(apc.OnBattery, 15))
+	if len(f.shutdowns) != 2 {
+		t.Fatalf("no retry after delay: %d", len(f.shutdowns))
+	}
+}
+
+func TestShutdownGivesUpAfterMaxAttempts(t *testing.T) {
+	store, path := configured(t)
+	w := &memoryWriter{}
+	f := &fakeExecutor{failShutdown: true}
+	now := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
+	c := makeController(t, store, path, w, f, &now)
+	triggerShutdown(t, c, &now)
+	for i := 0; i < 12; i++ {
+		now = now.Add(shutdownRetryDelay)
+		observe(t, c, sample(apc.OnBattery, 15))
+	}
+	if len(f.shutdowns) != maxShutdownAttempts {
+		t.Fatalf("attempt count %d, want %d", len(f.shutdowns), maxShutdownAttempts)
+	}
+	if got := countEvents(w, "remote_shutdown_failed"); got != maxShutdownAttempts {
+		t.Fatalf("failed events %d", got)
+	}
+	if got := countEvents(w, "remote_shutdown_gave_up"); got != 1 {
+		t.Fatalf("gave up events %d", got)
+	}
+	// A restart does not reset the budget.
+	c = makeController(t, store, path, w, f, &now)
+	now = now.Add(time.Hour)
+	observe(t, c, sample(apc.OnBattery, 15))
+	if len(f.shutdowns) != maxShutdownAttempts {
+		t.Fatal("retried beyond the attempt limit after restart")
+	}
+	// A host that never accepted shutdown is never woken.
+	observe(t, c, sample(apc.Online, 100))
+	now = now.Add(31 * time.Second)
+	observe(t, c, sample(apc.Online, 100))
+	if len(f.wakes) != 0 {
+		t.Fatal("woke a host that never accepted shutdown")
+	}
+}
+
+func TestLegacyShutdownAttemptCountsAsOne(t *testing.T) {
+	store, path := configured(t)
+	w := &memoryWriter{}
+	f := &fakeExecutor{failShutdown: true}
+	now := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
+	c := makeController(t, store, path, w, f, &now)
+	observe(t, c, sample(apc.Online, 100))
+	observe(t, c, sample(apc.OnBattery, 100))
+	// State written before attempt counting existed: attempted, but no counter.
+	c.state.Actions["node-1"] = ActionState{ShutdownAttempted: true}
+	if err := c.persist(); err != nil {
+		t.Fatal(err)
+	}
+	c = makeController(t, store, path, w, f, &now)
+	now = now.Add(11 * time.Second)
+	for i := 0; i < 12; i++ {
+		observe(t, c, sample(apc.OnBattery, 15))
+		now = now.Add(shutdownRetryDelay)
+	}
+	if want := maxShutdownAttempts - 1; len(f.shutdowns) != want {
+		t.Fatalf("attempt count %d, want %d", len(f.shutdowns), want)
+	}
+	if a := c.View().Actions["node-1"]; a.ShutdownAttempts != maxShutdownAttempts {
+		t.Fatalf("unexpected action state %+v", a)
+	}
+}
+
+func TestShutdownRetryContinuesAfterBatteryFlicker(t *testing.T) {
+	store, path := configured(t)
+	w := &memoryWriter{}
+	f := &fakeExecutor{failShutdown: true}
+	now := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
+	c := makeController(t, store, path, w, f, &now)
+	triggerShutdown(t, c, &now)
+	f.failShutdown = false
+	now = now.Add(30 * time.Second)
+	// The reading rose above the threshold, but the shutdown condition was
+	// already met in this outage, so the failed host must still be retried.
+	observe(t, c, sample(apc.OnBattery, 60))
+	if len(f.shutdowns) != 2 {
+		t.Fatalf("retry skipped after battery flicker: %d", len(f.shutdowns))
+	}
+	if !c.View().Actions["node-1"].ShutdownAccepted {
+		t.Fatal("retry not recorded as accepted")
+	}
+}
+
+func TestEventWriterFailureDoesNotBlockActions(t *testing.T) {
+	store, path := configured(t)
+	w := &memoryWriter{fail: true}
+	f := &fakeExecutor{}
+	now := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
+	c := makeController(t, store, path, w, f, &now)
+	if err := c.Observe(context.Background(), sample(apc.Online, 100)); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Observe(context.Background(), sample(apc.OnBattery, 100)); err == nil {
+		t.Fatal("event failure hidden")
+	}
+	if !c.View().Active {
+		t.Fatal("event failure prevented the cycle from starting")
+	}
+	now = now.Add(11 * time.Second)
+	if err := c.Observe(context.Background(), sample(apc.OnBattery, 15)); err == nil {
+		t.Fatal("event failure hidden")
+	}
+	if len(f.shutdowns) != 1 || !c.View().Actions["node-1"].ShutdownAccepted {
+		t.Fatal("event failure prevented shutdown")
+	}
+	if err := c.Observe(context.Background(), sample(apc.Online, 100)); err == nil {
+		t.Fatal("event failure hidden")
+	}
+	now = now.Add(31 * time.Second)
+	if err := c.Observe(context.Background(), sample(apc.Online, 100)); err == nil {
+		t.Fatal("event failure hidden")
+	}
+	if len(f.wakes) != 1 {
+		t.Fatal("event failure prevented wake")
+	}
+	if c.View().Active {
+		t.Fatal("event failure prevented cycle completion")
+	}
+}
+
+// shutDownThenRecover shuts the host down, delivers the first mains sample
+// (which starts the recovery confirmation) and moves past the stable period.
+func shutDownThenRecover(t *testing.T, c *Controller, now *time.Time, first monitor.Status) {
+	t.Helper()
+	triggerShutdown(t, c, now)
+	observe(t, c, first)
+	*now = now.Add(31 * time.Second)
+}
+
+func TestRecoveryCompletesAfterTimeoutWithoutBattery(t *testing.T) {
+	store, path := configured(t)
+	w := &memoryWriter{}
+	f := &fakeExecutor{}
+	now := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
+	c := makeController(t, store, path, w, f, &now)
+	noBattery := sample(apc.Online, 100)
+	noBattery.Current.BatteryPercent = nil
+	shutDownThenRecover(t, c, &now, noBattery)
+	observe(t, c, noBattery)
+	now = now.Add(58 * time.Minute)
+	observe(t, c, noBattery)
+	if len(f.wakes) != 0 || !c.View().Active {
+		t.Fatal("recovered before the battery timeout")
+	}
+	// 31 s + 58 min + 2 min after the recovery started: past one hour.
+	now = now.Add(2 * time.Minute)
+	observe(t, c, noBattery)
+	if len(f.wakes) != 1 || c.View().Active {
+		t.Fatalf("recovery did not complete: wakes=%d active=%v", len(f.wakes), c.View().Active)
+	}
+	if countEvents(w, "power_recovery_battery_timeout") != 1 {
+		t.Fatal("missing battery timeout event")
+	}
+}
+
+func TestRecoveryCompletesAfterTimeoutBelowThreshold(t *testing.T) {
+	store, path := configured(t)
+	cfg := store.Get()
+	cfg.RecoveryBatteryPercent = 100
+	if err := store.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	w := &memoryWriter{}
+	f := &fakeExecutor{}
+	now := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
+	c := makeController(t, store, path, w, f, &now)
+	shutDownThenRecover(t, c, &now, sample(apc.Online, 99))
+	observe(t, c, sample(apc.Online, 99))
+	now = now.Add(30 * time.Minute)
+	observe(t, c, sample(apc.Online, 99))
+	if len(f.wakes) != 0 {
+		t.Fatal("recovered at 99% before the battery timeout")
+	}
+	now = now.Add(31 * time.Minute)
+	observe(t, c, sample(apc.Online, 99))
+	if len(f.wakes) != 1 || c.View().Active {
+		t.Fatalf("recovery did not complete: wakes=%d active=%v", len(f.wakes), c.View().Active)
+	}
+	if countEvents(w, "power_recovery_battery_timeout") != 1 {
+		t.Fatal("missing battery timeout event")
+	}
+}
+
+func TestLowBatteryFlagBlocksRecoveryTimeout(t *testing.T) {
+	store, path := configured(t)
+	w := &memoryWriter{}
+	f := &fakeExecutor{}
+	now := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
+	c := makeController(t, store, path, w, f, &now)
+	low := sample(apc.Online, 100)
+	low.Current.Flags = []string{"LOWBATT"}
+	shutDownThenRecover(t, c, &now, low)
+	now = now.Add(3 * time.Hour)
+	observe(t, c, low)
+	if len(f.wakes) != 0 || !c.View().Active {
+		t.Fatal("LOWBATT did not block recovery")
+	}
+	// Once the flag clears, recovery proceeds normally.
+	observe(t, c, sample(apc.Online, 100))
+	if len(f.wakes) != 1 {
+		t.Fatal("recovery did not proceed after LOWBATT cleared")
 	}
 }

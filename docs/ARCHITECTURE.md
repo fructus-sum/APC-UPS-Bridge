@@ -6,7 +6,7 @@ Status: **proposal, not implemented**. This document records intended scope and 
 Turn an older USB-connected APC UPS into a LAN-accessible UPS status and protection gateway using a Raspberry Pi or another supported Linux host, without a database or cloud account.
 
 ## Supported v1 environment
-- Linux with systemd; initially target Raspberry Pi OS, Debian and Ubuntu (ARMv7, ARM64, x86-64 where releases are built).
+- Linux with systemd; initially target Raspberry Pi OS, Debian and Ubuntu (ARMv6/ARMv7, ARM64, x86-64).
 - One USB-connected APC UPS supported by apcupsd/apcaccess.
 - apcupsd keeps ownership of USB communication. No custom USB driver.
 - A private LAN is the intended deployment environment.
@@ -17,7 +17,7 @@ Turn an older USB-connected APC UPS into a LAN-accessible UPS status and protect
 3. No regular disk writes for normal UPS polls; significant events only.
 4. Works unattended without a browser session.
 5. Safe defaults, especially around shutdown and waking remote devices.
-6. An installation script should download *versioned, checksum-verified release binaries* from GitHub; do not compile on the target by default.
+6. The installation script builds the binary from source on the target with a temporary Go toolchain (no release binaries are published).
 
 ## Proposed source tree
 ```text
@@ -39,7 +39,7 @@ tests/fixtures/           # Example apcaccess outputs and state transitions
 ```
 
 ## Runtime design
-- Go process polls apcaccess (through apcupsd) on a configurable interval, defaults proposed at 10 seconds. External commands have timeouts.
+- Go process polls apcaccess (through apcupsd) on a configurable interval (5-60 seconds), defaults proposed at 10 seconds. External commands have timeouts.
 - Cache readings in memory; serve status to browser from cache. Never poll on each web request.
 - Serve login, dashboard, event reports and admin settings on one configurable HTTP port (proposed 8080).
 - Configure apcupsd NIS on 127.0.0.1:3551 when compatible with the existing setup. Don't unnecessarily expose NIS.
@@ -82,7 +82,7 @@ tests/fixtures/           # Example apcaccess outputs and state transitions
 
 ## Installer and operations
 - Bash installer detects distro, CPU architecture, init system, apcupsd availability and existing configuration.
-- Download selected GitHub release with checksum verification; install minimal OS packages as needed.
+- Build from the repository source with a temporary, checksum-verified Go toolchain; install minimal OS packages as needed.
 - Back up files before modifying apcupsd; never replace working config without clear approval.
 - Create a dedicated user, secure config/state/log directories, install systemd service, enable/start it.
 - Support re-runnable installations, updates, uninstall and config backups.

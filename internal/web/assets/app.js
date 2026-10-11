@@ -16,7 +16,7 @@ function makeTimeline(root,events) {
  if (!events.length) {const p=document.createElement('p');p.className='muted';p.textContent='No events recorded in this period.';root.append(p);return;}
  for(const e of events){
   const item=document.createElement('div');item.className='event-row';
-  const dot=document.createElement('span');dot.className='dot' + (e.level==='warning'?' warning':'');
+  const dot=document.createElement('span');dot.className='dot' + (e.level==='warning'||e.level==='critical'?' warning':'');
   const info=document.createElement('div');const title=document.createElement('div');title.className='event-name';title.textContent=e.type.replaceAll('_',' ');
   const desc=document.createElement('div');desc.className='event-detail';
   const details=e.details||{};desc.textContent=[details.device,details.status,typeof details.battery_percent==='number'?details.battery_percent+'% battery':'',details.reason||''].filter(Boolean).join(' · ');
@@ -78,7 +78,6 @@ async function startSettings(){
   }catch(e){feedback.textContent='Could not save: '+e.message;}
  });
 }
-if(page==='/'){refreshDashboard();refreshFirmware();refreshRecent();setInterval(refreshDashboard,10000);setInterval(refreshFirmware,60000);setInterval(refreshRecent,60000);}
 async function refreshPowerState(){
  try {const v=await getJSON('/api/power/state');
  const text=v.enabled ? (v.active ? 'Active: '+v.phase.replaceAll('_',' ') : (v.armed?'Armed · waiting for outage':'Enabled · not yet armed')) : 'Disabled · remote actions off';
@@ -128,7 +127,7 @@ async function startPower(){
  });
  refreshPowerState();setInterval(refreshPowerState,10000);
 }
-if(page==='/'){refreshDashboard();refreshRecent();refreshPowerState();setInterval(refreshPowerState,10000);setInterval(refreshDashboard,10000);setInterval(refreshRecent,60000);}
+if(page==='/'){refreshDashboard();refreshFirmware();refreshRecent();refreshPowerState();setInterval(refreshDashboard,10000);setInterval(refreshFirmware,60000);setInterval(refreshRecent,60000);setInterval(refreshPowerState,10000);}
 if(page==='/events'){refreshEvents();el('range').addEventListener('change',refreshEvents);el('refresh-events').addEventListener('click',refreshEvents);}
 if(page==='/settings') startSettings();
 

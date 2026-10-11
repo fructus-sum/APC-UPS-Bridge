@@ -37,3 +37,27 @@ func TestWakePacketSentToSelectedDestination(t *testing.T) {
 		}
 	}
 }
+
+func TestSSHShutdownDroppedClassification(t *testing.T) {
+	cases := []struct {
+		name   string
+		code   int
+		output string
+		want   bool
+	}{
+		{"closed by remote host", 255, "Connection to 10.20.30.11 closed by remote host.\n", true},
+		{"mixed case", 255, "CONNECTION CLOSED BY REMOTE HOST", true},
+		{"other ssh failure", 255, "ssh: connect to host 10.20.30.11 port 22: Connection refused\n", false},
+		{"permission denied", 255, "root@10.20.30.11: Permission denied (publickey).\n", false},
+		{"wrong exit code", 1, "Connection to 10.20.30.11 closed by remote host.\n", false},
+		{"no exit code", -1, "closed by remote host", false},
+		{"empty output", 255, "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := sshShutdownDropped(tc.code, []byte(tc.output)); got != tc.want {
+				t.Fatalf("sshShutdownDropped(%d, %q) = %v, want %v", tc.code, tc.output, got, tc.want)
+			}
+		})
+	}
+}
