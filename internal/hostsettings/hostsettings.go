@@ -16,6 +16,7 @@ import (
 
 const SocketPath="/run/apc-ups-bridge-host-settings.sock"
 const ConfigPath="/etc/apcupsd/apcupsd.conf"
+const ManagedMarker="/etc/apcupsd/.apc-ups-bridge-managed"
 type Settings struct {
  Managed bool `json:"managed"`
  BatteryPercent int `json:"battery_percent"`
@@ -34,11 +35,16 @@ func (s Settings) Validate() error {
 }
 func Apply(s Settings) Result {
  if err:=s.Validate();err!=nil{return Result{Error:err.Error()}}
- if !s.Managed{return Result{Message:"Existing apcupsd settings kept unchanged."}}
+ if !s.Managed{
+  if os.Geteuid()!=0{return Result{Error:"The privileged configuration service is unavailable"}}
+  if err:=os.Remove(ManagedMarker);err!=nil&&!os.IsNotExist(err){return Result{Error:"Could not change management mode"}}
+  return Result{Message:"Web management disabled. Current apcupsd thresholds remain unchanged."}
+ }
  if os.Geteuid()!=0{return Result{Error:"The privileged configuration service is unavailable"}}
  if err:=verifyOnline();err!=nil{return Result{Error:err.Error()}}
  if err:=applyConfig(ConfigPath,s,func()error{return exec.Command("/usr/bin/systemctl","restart","apcupsd.service").Run()});err!=nil{return Result{Error:err.Error()}}
- return Result{Applied:true,Message:"Pi shutdown thresholds applied; apcupsd restarted. Verify UPS status."}
+ if err:=os.WriteFile(ManagedMarker,[]byte("managed by APC UPS Bridge\\n"),0600);err!=nil{return Result{Error:"Thresholds applied, but the web-management marker could not be saved"}}
+ return Result{Applied:true,Message:"Pi shutdown thresholds applied. Verify apcupsd status."}
 }
 func verifyOnline()error{
  var output []byte;var err error
