@@ -23,6 +23,7 @@ import (
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/events"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/firmware"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/hostsettings"
+	"github.com/fructus-sum/APC-UPS-Bridge/internal/hostsettings"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/monitor"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/notify"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/power"
@@ -214,7 +215,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := h.Power.UpdateConfig(value); err != nil {
-			http.Error(w, err.Error(), case "/api/power/host-settings":
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		respondJSON(w, h.PowerConfig())
+	case "/api/power/host-settings":
 		if r.Method != http.MethodPost { http.Error(w,"method not allowed",405); return }
 		if !csrfValid(r,csrf) { http.Error(w,"invalid CSRF token",403); return }
 		r.Body=http.MaxBytesReader(w,r.Body,1024)
@@ -234,9 +239,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if err!=nil {http.Error(w,"Local apcupsd settings service unavailable: "+err.Error(),503);return}
 		if result.Error!="" {http.Error(w,result.Error,409);return}
 		respondJSON(w,result)
-	start apcupsd.service",
-			"apcaccess status",
-		}})
 	case "/api/power/host-thresholds":
 		if r.Method != http.MethodGet { http.Error(w, "method not allowed", 405); return }
 		respondJSON(w, hostShutdownSettings())
