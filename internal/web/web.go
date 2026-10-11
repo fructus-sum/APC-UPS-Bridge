@@ -23,7 +23,6 @@ import (
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/events"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/firmware"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/hostsettings"
-	"github.com/fructus-sum/APC-UPS-Bridge/internal/hostsettings"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/monitor"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/notify"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/power"
