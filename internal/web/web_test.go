@@ -150,3 +150,14 @@ func TestFirmwareRouteAuthentication(t *testing.T) {
  if w:=request(h,"GET","/api/firmware","",cookie,"");w.Code!=200||!strings.Contains(w.Body.String(),"\"status\":\"unknown\""){t.Fatalf("firmware API failed: %d %s",w.Code,w.Body.String())}
  if w:=request(h,"POST","/api/firmware","",cookie,"");w.Code!=405{t.Fatalf("firmware API permits mutation: %d",w.Code)}
 }
+
+func TestDashboardAlwaysContainsFirmwareDetails(t *testing.T) {
+ h,a:=setupWeb(t)
+ token,_,err:=a.Login("127.0.0.1","admin","long secret passphrase");if err!=nil{t.Fatal(err)}
+ cookie:=&http.Cookie{Name:"ups_bridge_session",Value:token}
+ w:=request(h,"GET","/","",cookie,"")
+ if w.Code!=200{t.Fatalf("dashboard returned %d",w.Code)}
+ for _,value:=range []string{"id=\"firmware-installed\"","id=\"firmware-status\"","id=\"firmware-ups-id\"","id=\"firmware-warning\""}{
+  if !strings.Contains(w.Body.String(),value){t.Errorf("missing firmware display: %s",value)}
+ }
+}
