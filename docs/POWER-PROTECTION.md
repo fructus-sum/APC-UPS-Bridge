@@ -1,0 +1,30 @@
+# Remote power protection
+
+APC UPS Bridge can issue approved SSH shutdown commands to remote Linux machines and optionally send Wake-on-LAN packets after power recovers. The feature is **globally disabled by default**, and each host has separate shutdown/wake permissions. The Raspberry Pi's own shutdown is handled by `apcupsd`, not a second local shutdown loop in the bridge.
+
+## Configure protected hosts
+
+Use the authenticated **Power rules & devices** page. Up to 16 remote devices may be configured. Each needs a unique ID, name, host/address, SSH username and port. Set shutdown priority, whether `sudo -n` is needed, and optional MAC, IPv4 wake destination and UDP port for WoL.
+
+Prepare the SSH identity as the **`apc-ups-bridge` service user**, including a trustworthy `known_hosts` entry for each destination. The application uses `BatchMode=yes`, `StrictHostKeyChecking=yes` and fixed commands (`shutdown -h now`, optionally prefixed with `sudo -n`). It does not accept SSH passwords or arbitrary shell commands from the browser. A suitable `ssh` client must be installed on the bridge host.
+
+Verify that the remote account can issue the shutdown command using narrowly scoped permissions before enabling power automation. If using WoL, confirm the target's firmware/network settings and broadcast reachability on your actual network. WoL delivery is not guaranteed.
+
+## Shutdown behavior
+
+- The controller must observe a healthy ONLINE state while enabled before it arms. Booting already on battery does not trigger unobserved shutdown commands.
+- After ON_BATTERY confirmation (30 seconds by default, minimum 10), a shutdown trigger is low reported battery (20% by default), configured remaining runtime, or the UPS `LOWBATT` flag. Unknown battery and runtime values are not interpreted as zero.
+- Hosts are processed in increasing shutdown-priority groups. Hosts within one priority group are handled in parallel, and the next priority group begins when the previous group's commands return.
+- Each host may get up to **5 shutdown attempts**, separated by at least **30 seconds**, with attempts persisted before execution. Later polling cycles can retry an unconfirmed shutdown; restarting the bridge does not reset the limit.
+- Once a shutdown command is accepted, the bridge later checks SSH-port reachability. Two failed checks (at least 30 seconds apart, following a verification delay) classify a host as off. This cannot distinguish genuine shutdown from a network failure. A host that still answers can receive another bounded shutdown attempt. Gave-up cases are logged.
+- Turning automation off interrupts further approved actions. State and exceptions are logged as meaningful events; routine poll samples are not written.
+
+## Recovery and waking hosts
+
+Healthy ONLINE must remain stable for a configured period (120 seconds by default), with battery above the configured recovery threshold (40% by default) and no `LOWBATT` indication. If battery readings are absent or remain too low, recovery can proceed after an hour of continuously stable mains with a warning; an active `LOWBATT` always blocks recovery.
+
+Only hosts with an accepted prior shutdown, explicit wake permission and unchanged approved identity qualify for a WoL packet. A wake attempt is persisted before sending and is **at most once** in a cycle, not a guarantee of startup. Disabling automation during an incident may require manual recovery.
+
+Power protection state is stored at `/var/lib/apc-ups-bridge/power-state.json`, separate from configurable rules in `/etc/apc-ups-bridge/power.json`. Corrupt state fails closed instead of guessing which commands were already attempted. Always keep both files across upgrades or power cycles.
+
+**Safety:** Test shutdown order, SSH host-key verification, service permissions, abrupt Pi restarts, battery thresholds and WoL on noncritical equipment before relying on automatic protection. Use [installation guidance](INSTALL.md) for service setup and [email documentation](EMAIL-NOTIFICATIONS.md) for the separate full-charge report completion rule.
