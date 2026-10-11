@@ -539,6 +539,7 @@ build_binary() {
   [[ -s "$out" ]] || die 'Build produced no binary'
   chmod 0755 "$out"
   "$out" --version >/dev/null </dev/null || die 'Built binary cannot execute on this host'
+  (cd "$SOURCE_DIR" && "${GO_ENV[@]}" "$GO_BIN" build -trimpath -buildvcs=false -o "$WORKDIR/apc-ups-bridge-host-helper" ./cmd/apc-ups-bridge-host-helper </dev/null) || die 'Host settings helper build failed'
 }
 
 main() {
@@ -595,6 +596,14 @@ main() {
     info 'Preserving existing administrator password hash.'
   fi
   write_service
+  # Install root-owned, narrowly scoped socket helper without granting root
+  # permissions or extra capabilities to the web process.
+  install -d -m 0755 /usr/local/libexec
+  install -o root -g root -m 0755 "$WORKDIR/apc-ups-bridge-host-helper" /usr/local/libexec/apc-ups-bridge-host-helper
+  install -o root -g root -m 0644 "$SOURCE_DIR/packaging/systemd/apc-ups-bridge-host-settings.socket" "$UNIT_DIR/apc-ups-bridge-host-settings.socket"
+  install -o root -g root -m 0644 "$SOURCE_DIR/packaging/systemd/apc-ups-bridge-host-settings.service" "$UNIT_DIR/apc-ups-bridge-host-settings.service"
+  systemctl daemon-reload
+  systemctl enable --now apc-ups-bridge-host-settings.socket
   systemctl enable "$SERVICE"
   if [[ "$SKIP_START" == false ]]; then
     info 'Starting the service and watching it for a few seconds...'
