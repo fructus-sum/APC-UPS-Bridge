@@ -22,6 +22,7 @@ import (
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/auth"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/config"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/events"
+	"github.com/fructus-sum/APC-UPS-Bridge/internal/history"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/monitor"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/notify"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/power"
@@ -37,6 +38,7 @@ func run() int {
 	interval := flag.Duration("interval", 10*time.Second, "initial UPS poll interval, overridden by saved web settings")
 	timeout := flag.Duration("timeout", 4*time.Second, "apcaccess command timeout")
 	logDir := flag.String("log-dir", "/var/log/apc-ups-bridge", "directory for monthly event-only logs")
+	historyDir := flag.String("history-dir", "/var/lib/apc-ups-bridge/history", "daily voltage/load samples retained for 30 days")
 	retention := flag.Int("retention-days", 365, "initial retention days, 0=forever; overridden by saved settings")
 	low := flag.Float64("low-battery", 20, "initial low battery warning percentage (no shutdown)")
 	once := flag.Bool("once", false, "single hardware poll printed as JSON; requires no web password")
@@ -71,8 +73,8 @@ func run() int {
 		fmt.Println("Administrator password configured. Restart a running service after CLI password reset.")
 		return 0
 	}
-	if *interval < 5*time.Second || *interval > time.Minute || *interval%time.Second != 0 || *timeout <= 0 || *retention < 0 || *retention > 36500 {
-		fmt.Fprintln(os.Stderr, "invalid duration/retention: poll interval must be whole seconds 5–60; timeout positive; retention 0–36500")
+	if *interval < 5*time.Second || *interval > time.Hour || *interval%time.Second != 0 || *timeout <= 0 || *retention < 0 || *retention > 36500 {
+		fmt.Fprintln(os.Stderr, "invalid duration/retention: poll interval must be whole seconds 5–3600; timeout positive; retention 0–36500")
 		return 2
 	}
 	logger := log.New(os.Stderr, "apc-ups-bridge: ", log.LstdFlags|log.LUTC)
@@ -97,6 +99,10 @@ func run() int {
 		return 2
 	}
 	current := settings.Get()
+	historyStore := history.New(*historyDir)
+	if _, err := historyStore.Cleanup(time.Now()); err != nil {
+		logger.Printf("history cleanup: %v", err)
+	}
 	reader := apc.CommandReader{Path: *command, Timeout: *timeout}
 	mon, err := monitor.New(reader, events.FileWriter{Dir: *logDir}, current.LowBatteryPercent)
 	if err != nil {
@@ -164,6 +170,7 @@ func run() int {
 	handler, err := web.New(mon, admin, settings, *logDir, powerController)
 	if err == nil {
 		web.AttachEmail(handler, mailEngine)
+		web.AttachHistory(handler, historyStore)
 	}
 	if err != nil {
 		logger.Print(err)
@@ -197,10 +204,6 @@ func run() int {
 	lastPowerError := false
 	poll := func() {
 		err := mon.Poll(ctx)
-		if ctx.Err() != nil {
-			// Stopping: the monitor snapshot is stale, so never act on it.
-			return
-		}
 		if err != nil && ctx.Err() == nil && !lastPollError {
 			logger.Printf("UPS poll error (repeats suppressed): %v", err)
 		}
@@ -209,6 +212,15 @@ func run() int {
 		}
 		lastPollError = err != nil
 		status := mon.Snapshot()
+		if err != nil {
+			status.Healthy = false
+			status.Current = nil
+		}
+		if status.Healthy && status.Current != nil {
+			if sampleErr := historyStore.Record(status.Current); sampleErr != nil {
+				logger.Printf("history sample: %v", sampleErr)
+			}
+		}
 		automationErr := powerController.Observe(ctx, status)
 		if automationErr != nil && ctx.Err() == nil && !lastPowerError {
 			logger.Printf("power automation error (repeats suppressed): %v", automationErr)
@@ -253,6 +265,9 @@ func run() int {
 			current = next
 			logger.Print("monitoring settings applied")
 		case <-cleanupTick.C:
+			if _, e := historyStore.Cleanup(time.Now()); e != nil {
+				logger.Printf("history cleanup: %v", e)
+			}
 			clean(current.RetentionDays)
 		}
 	}
