@@ -337,6 +337,14 @@ sed -n "/<<'UNIT'\$/,/^UNIT\$/p" "$ROOT/scripts/install.sh" | sed '1d;$d' | tr -
 tr -d '\r' < "$ROOT/packaging/systemd/apc-ups-bridge.service" > "$stage/packaged.service"
 cmp -s "$stage/embedded.service" "$stage/packaged.service" || fail 'packaging/systemd unit differs from the unit embedded in install.sh'
 
+# --- privileged helper installation contracts (no host modifications) ---
+grep -q 'cmd/apc-ups-bridge-host-helper' "$ROOT/scripts/install.sh" || fail 'host settings helper not built'
+grep -q 'apc-ups-bridge-host-settings.socket' "$ROOT/scripts/install.sh" || fail 'host settings socket not installed'
+grep -q 'systemctl enable --now apc-ups-bridge-host-settings.socket' "$ROOT/scripts/install.sh" || fail 'host settings socket not enabled'
+grep -q 'SocketMode=0600' "$ROOT/packaging/systemd/apc-ups-bridge-host-settings.socket" || fail 'host settings socket is not private'
+grep -q 'NoNewPrivileges=true' "$ROOT/packaging/systemd/apc-ups-bridge-host-settings.service" || fail 'host settings helper not hardened'
+grep -q 'apc-ups-bridge-host-settings.socket' "$ROOT/scripts/uninstall.sh" || fail 'host settings socket not uninstalled'
+
 # --- script hygiene ---
 [[ "$(tail -n 1 "$ROOT/scripts/install.sh" | tr -d '\r')" == *'main "$@"'* ]] || fail 'main must be invoked on the last line of install.sh'
 [[ $(grep -c 'main "\$@"' "$ROOT/scripts/install.sh") == 1 ]] || fail 'main must be invoked exactly once'
