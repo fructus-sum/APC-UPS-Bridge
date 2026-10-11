@@ -148,7 +148,7 @@ function addDevice(data={}){
   try{
    const response=await fetch('/api/power/test-ssh',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({id})});
    if(!response.ok)throw new Error((await response.text()).trim());
-   const result=await response.json();status.textContent=(result.status==='ready'?'✓ ':result.status==='warning'?'⚠ ':'✕ ')+result.message;
+   const result=await response.json();status.textContent=(result.status==='ready'?'✓ ':result.status==='warning'?'⚠ ':'✕ ')+result.message+(result.status==='error'?' If the key may be the cause, see “SSH key for remote hosts” above.':'');
   }catch(e){status.textContent='Test unavailable: '+e.message+' Save this device first, then retry.';}
   finally{test.disabled=false;}
  });section.append(test,status);
@@ -167,8 +167,23 @@ async function loadHostThresholds(){
   if(!r.available)el('host-shutdown-note').textContent='Could not read apcupsd.conf from the Bridge service. Check the Pi configuration directly; remote rules below are separate.';
  }catch(e){el('host-shutdown-note').textContent='Could not read Pi shutdown settings. Remote rules below are separate.';}
 }
+async function loadSSHKey(){
+ const line=el('ssh-auth-line');const pre='from="<bridge-ip>",command="<shutdown command for that host>",restrict ';
+ line.textContent=pre+'<bridge public key>';
+ try{
+  const r=await getJSON('/api/power/ssh-key');const k=(r.keys||[])[0];
+  el('ssh-key-loading').hidden=true;
+  if(!k){el('ssh-key-none').hidden=false;return;}
+  el('ssh-key-text').value=k.key;el('ssh-key-fp').textContent=k.fingerprint;line.textContent=pre+k.key;el('ssh-key-have').hidden=false;
+  el('ssh-key-copy').addEventListener('click',async()=>{
+   const fb=el('ssh-key-copy-feedback'),box=el('ssh-key-text');
+   try{await navigator.clipboard.writeText(k.key);fb.textContent='Copied.';}
+   catch(e){box.focus();box.select();fb.textContent='Press Ctrl+C to copy the selected key.';}
+  });
+ }catch(e){el('ssh-key-loading').textContent='Could not read the bridge’s SSH public key.';}
+}
 async function startPower(){
- loadHostThresholds();
+ loadHostThresholds();loadSSHKey();
  const feedback=el('power-feedback');
  try{const v=await getJSON('/api/power');
  el('power-enabled').checked=v.enabled;el('shutdown-percent').value=v.shutdown_battery_percent;el('shutdown-runtime').value=v.shutdown_runtime_minutes;

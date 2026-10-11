@@ -262,6 +262,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		result, found := h.testSavedSSH(ctx, req.ID)
 		if !found { http.Error(w, "saved device not found", 404); return }
 		respondJSON(w, result)
+	case "/api/power/ssh-key":
+		if r.Method != http.MethodGet { http.Error(w, "method not allowed", 405); return }
+		respondJSON(w, struct { Keys []power.SSHPublicKey `json:"keys"` }{power.ServicePublicKeys()})
 	case "/api/power/state":
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", 405)

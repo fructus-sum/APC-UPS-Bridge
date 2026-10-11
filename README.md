@@ -16,7 +16,7 @@ APC UPS Bridge runs on a Raspberry Pi or other Linux host and reads a single APC
 - **Firmware information and advisory:** always display reported firmware (or **Unknown**) and the separate update-check status; warn only for recognized model/UPS-ID combinations whose installed firmware is below a dated local Schneider reference. No firmware is flashed.
 - **Administration:** single administrator account, session-based login, password change, configurable polling (5–60 seconds), battery warning and log retention.
 
-See [power protection](docs/POWER-PROTECTION.md), [email delivery](docs/EMAIL-NOTIFICATIONS.md) and [firmware guidance](docs/FIRMWARE.md) for important behavior and limitations.
+See [power protection](docs/POWER-PROTECTION.md), [SSH key setup](docs/SSH-KEYS.md), [email delivery](docs/EMAIL-NOTIFICATIONS.md) and [firmware guidance](docs/FIRMWARE.md) for important behavior and limitations.
 
 ## Install on Linux / Raspberry Pi
 
