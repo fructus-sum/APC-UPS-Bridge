@@ -34,6 +34,8 @@ async function refreshDashboard(){
   el('upsname').textContent=r.name||'Not reported';el('model').textContent=r.model||'Not reported';
   el('power').textContent=current?.status||'Unavailable';el('output').textContent=numeric(r.output_volts,' V',1);
   el('checked').textContent=dateText(r.observed_at);el('communication').textContent=s.healthy?'Connected':'Failed · '+(s.error||'Unknown reason');
+  const noBat=typeof r.battery_percent!=='number',noRun=typeof r.runtime_minutes!=='number',miss=el('missing-metrics-notice');
+  if(miss){miss.hidden=!(s.healthy&&current&&(noBat||noRun));el('missing-metrics-text').textContent='This UPS does not report '+(noBat&&noRun?'battery charge or runtime':noBat?'battery charge':'runtime')+'. '+(noBat&&noRun?"Only the on-battery timer and the UPS's own low-battery signal can trigger the Pi shutdown.":'The '+(noBat?'charge':'runtime')+' limit cannot trigger the Pi shutdown; the other limits, the on-battery timer and the UPS\'s own low-battery signal still can.');}
   el('battery-note').textContent=s.healthy?'Live UPS reading':'Showing last known value · stale';
   el('battery-bar').style.width=typeof r.battery_percent==='number'?Math.min(100,Math.max(0,r.battery_percent))+'%':'0%';
   el('battery-bar').className='battery-fill'+(typeof r.battery_percent==='number'&&r.battery_percent<=20?' low':'');
@@ -97,13 +99,14 @@ function startHostSettings(){
   mode.value=v.managed?'managed':'existing';inputs.hidden=!v.managed;
   if(typeof v.battery_percent==='number' && v.battery_percent>=5 && v.battery_percent<=95)el('host-setting-battery').value=v.battery_percent;
   if(typeof v.runtime_minutes==='number' && v.runtime_minutes>=0 && v.runtime_minutes<=120)el('host-setting-minutes').value=v.runtime_minutes;
+  if(typeof v.timeout_seconds==='number' && (v.managed || v.timeout_seconds>0))el('host-setting-timeout').value=Math.min(120,Math.max(0,Math.round(v.timeout_seconds/60)));
  }).catch(()=>{});
  mode.addEventListener('change',()=>{inputs.hidden=mode.value!=='managed';});
  form.addEventListener('submit',async event=>{
   event.preventDefault();const feedback=el('host-settings-feedback');
   feedback.textContent='Checking UPS and applying…';
-  const settings={managed:mode.value==='managed',battery_percent:Number(el('host-setting-battery').value),runtime_minutes:Number(el('host-setting-minutes').value)};
-  if(settings.managed&&!window.confirm('Apply the Pi shutdown thresholds and restart apcupsd? This does not change remote machine shutdown rules.')){feedback.textContent='Not applied.';return;}
+  const settings={managed:mode.value==='managed',battery_percent:Number(el('host-setting-battery').value),runtime_minutes:Number(el('host-setting-minutes').value),timeout_minutes:Number(el('host-setting-timeout').value)};
+  if(settings.managed&&!window.confirm('Apply the Pi shutdown thresholds ('+settings.battery_percent+'% charge, '+settings.runtime_minutes+' min runtime, '+(settings.timeout_minutes?settings.timeout_minutes+' min on battery':'on-battery timer off')+') and restart apcupsd? This does not change remote machine shutdown rules.')){feedback.textContent='Not applied.';return;}
   try{
    const response=await fetch('/api/power/host-settings',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(settings)});
    if(!response.ok)throw new Error((await response.text()).trim());
@@ -160,7 +163,7 @@ async function loadHostThresholds(){
   const n=(v,unit)=>typeof v==='number'?(v===0?'Disabled':'At '+v+unit):'Not configured / unknown';
   el('host-shutdown-battery').textContent=n(r.battery_percent,'%');
   el('host-shutdown-runtime').textContent=n(r.runtime_minutes,' minutes');
-  el('host-shutdown-timer').textContent=n(r.timeout_seconds,' seconds on battery');
+  el('host-shutdown-timer').textContent=typeof r.timeout_seconds!=='number'?'Not configured / unknown':r.timeout_seconds===0?'Off':r.timeout_seconds%60===0?'After '+r.timeout_seconds/60+' minutes on battery':'After '+r.timeout_seconds+' seconds on battery';
   if(!r.available)el('host-shutdown-note').textContent='Could not read apcupsd.conf from the Bridge service. Check the Pi configuration directly; remote rules below are separate.';
  }catch(e){el('host-shutdown-note').textContent='Could not read Pi shutdown settings. Remote rules below are separate.';}
 }
