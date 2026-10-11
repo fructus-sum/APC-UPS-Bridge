@@ -18,6 +18,10 @@ import (
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/monitor"
 )
 
+// alertCooldown is the minimum gap between attempted start/restore alerts within
+// one incident, so flapping mains cannot flood the mailbox.
+const alertCooldown = 10 * time.Minute
+
 // Target identifies a system that must become SSH-reachable before the summary.
 // Host identity is captured at outage time and survives Pi reboots.
 type Target struct {
@@ -32,6 +36,9 @@ type Period struct {
 	StartAttempted bool      `json:"start_attempted"`
 	EndAttempted   bool      `json:"end_attempted"`
 	UncertainStart bool      `json:"uncertain_start,omitempty"`
+	// AlertSuppressed marks a period that began and ended inside the alert
+	// cooldown, so no start or restore email was sent for it.
+	AlertSuppressed bool `json:"alert_suppressed,omitempty"`
 }
 type Incident struct {
 	ID                     string    `json:"id"`
@@ -43,8 +50,11 @@ type Incident struct {
 	ObservationInterrupted bool      `json:"observation_interrupted,omitempty"`
 	LastError              string    `json:"last_error,omitempty"`
 	NextAttempt            time.Time `json:"next_attempt,omitempty"`
-	SummaryBlocked         bool      `json:"summary_blocked,omitempty"`
-	SummaryInFlight        bool      `json:"summary_in_flight,omitempty"`
+	// LastAlertAt is when a start or restore alert was last attempted; it
+	// drives the per-incident alert cooldown against flapping mains.
+	LastAlertAt     time.Time `json:"last_alert_at,omitempty"`
+	SummaryBlocked  bool      `json:"summary_blocked,omitempty"`
+	SummaryInFlight bool      `json:"summary_in_flight,omitempty"`
 }
 type State struct {
 	SeenOnline   bool      `json:"seen_online"`
@@ -195,7 +205,14 @@ func (e *Engine) Observe(ctx context.Context, s monitor.Status, targets []Target
 		}
 		p := &i.Periods[len(i.Periods)-1]
 		if !p.StartAttempted {
+			// Flapping mains: wait out the cooldown after the previous alert. If
+			// the outage ends first, no alert is sent for it; if it persists, the
+			// start alert goes out on the first sample after the cooldown.
+			if !i.LastAlertAt.IsZero() && now.Sub(i.LastAlertAt) < alertCooldown {
+				return nil
+			}
 			p.StartAttempted = true
+			i.LastAlertAt = now
 			if err := e.persist(); err != nil {
 				return err
 			}
@@ -203,7 +220,7 @@ func (e *Engine) Observe(ctx context.Context, s monitor.Status, targets []Target
 			if p.UncertainStart {
 				subject = "APC UPS Bridge — UPS on battery (start time unknown)"
 			}
-			e.attempt(ctx, cfg, subject, fmt.Sprintf("Incident: %s\nUPS power: ON BATTERY\nDetected: %s\nBattery: %s\n\nThis alert is sent once. If the internet is down it will not be retried. A full report is retained until the UPS reaches 100%% and protected systems recover.\n", i.ID, now.Format(time.RFC3339), batteryText(up.BatteryPercent)), i.ID+fmt.Sprintf("-start-%d", len(i.Periods)))
+			e.attempt(ctx, cfg, subject, fmt.Sprintf("Incident: %s\nUPS power: ON BATTERY\nDetected: %s\nBattery: %s\n\nThis alert is sent once and is not retried if the internet is down. Further short interruptions within 10 minutes of an alert are not emailed individually. A full report is retained until the UPS reaches 100%% and protected systems recover.\n", i.ID, now.Format(time.RFC3339), batteryText(up.BatteryPercent)), i.ID+fmt.Sprintf("-start-%d", len(i.Periods)))
 		}
 		return nil
 	}
@@ -228,10 +245,22 @@ func (e *Engine) Observe(ctx context.Context, s monitor.Status, targets []Target
 	}
 	if !p.EndAttempted {
 		p.EndAttempted = true
-		if err := e.persist(); err != nil {
-			return err
+		if !p.StartAttempted {
+			// Brief flap inside the cooldown: no start alert was sent, so no
+			// restore alert is sent either. The final report still lists it.
+			p.StartAttempted = true
+			p.AlertSuppressed = true
+			if err := e.persist(); err != nil {
+				return err
+			}
+			e.log("email_alert_suppressed", "info", map[string]any{"incident": i.ID, "segment": len(i.Periods)})
+		} else {
+			i.LastAlertAt = now
+			if err := e.persist(); err != nil {
+				return err
+			}
+			e.attempt(ctx, cfg, "APC UPS Bridge — Mains power restored", fmt.Sprintf("Incident: %s\nUPS returned to mains at: %s\nBattery: %s\n\nThe final recovery report will be sent only after 100%% charge and all monitored systems are reachable.\n", i.ID, p.EndedAt.Format(time.RFC3339), batteryText(up.BatteryPercent)), i.ID+fmt.Sprintf("-restore-%d", len(i.Periods)))
 		}
-		e.attempt(ctx, cfg, "APC UPS Bridge — Mains power restored", fmt.Sprintf("Incident: %s\nUPS returned to mains at: %s\nBattery: %s\n\nThe final recovery report will be sent only after 100%% charge and all monitored systems are reachable.\n", i.ID, p.EndedAt.Format(time.RFC3339), batteryText(up.BatteryPercent)), i.ID+fmt.Sprintf("-restore-%d", len(i.Periods)))
 	}
 	// Charging at 99% is *not* complete; preserve the incident through restarts.
 	if up.BatteryPercent == nil || *up.BatteryPercent < 100 || i.SummaryBlocked || now.Before(i.NextAttempt) {

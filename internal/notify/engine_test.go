@@ -147,10 +147,10 @@ func TestMultipleOutagesBecomeOneFinalReport(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if len(s.messages) != 5 {
-		t.Fatalf("got %d mails, expected start/restored alerts each outage + 1 summary", len(s.messages))
+	if len(s.messages) != 3 {
+		t.Fatalf("got %d mails, expected start and restored alert for the first outage (second is inside the cooldown) + 1 summary", len(s.messages))
 	}
-	if !strings.Contains(s.messages[4].body, "Power interruptions: 2") {
+	if !strings.Contains(s.messages[2].body, "Power interruptions: 2") {
 		t.Fatal("missing combined report")
 	}
 }
@@ -232,5 +232,106 @@ func TestSummaryFailureIsQueuedAndThrottled(t *testing.T) {
 	_ = e.Observe(ctx, snap(apc.Online, 100), nil)
 	if e.View().Pending {
 		t.Fatal("report not delivered after recovery")
+	}
+}
+
+func cooldownEngine(t *testing.T) (*Engine, *fakeSender, *time.Time) {
+	t.Helper()
+	sender := &fakeSender{}
+	e, _ := newEngine(t, t.TempDir(), sender)
+	now := time.Date(2026, 10, 10, 10, 0, 0, 0, time.UTC)
+	e.now = func() time.Time { return now }
+	e.probe = func(context.Context, Config) error { return nil }
+	e.hosts = func(context.Context, []Target) bool { return true }
+	return e, sender, &now
+}
+func observe(t *testing.T, e *Engine, p apc.PowerState, pct float64) {
+	t.Helper()
+	if err := e.Observe(context.Background(), snap(p, pct), nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRapidFlappingSendsOneStartAndOneRestore(t *testing.T) {
+	e, sender, now := cooldownEngine(t)
+	observe(t, e, apc.Online, 100)
+	for k := 0; k < 3; k++ {
+		*now = now.Add(30 * time.Second)
+		observe(t, e, apc.OnBattery, 90)
+		*now = now.Add(30 * time.Second)
+		observe(t, e, apc.Online, 90)
+		// Re-polling while on battery or online must not resend.
+		*now = now.Add(30 * time.Second)
+		observe(t, e, apc.Online, 91)
+	}
+	if len(sender.messages) != 2 || !strings.Contains(sender.messages[0].subject, "Power failure") || !strings.Contains(sender.messages[1].subject, "restored") {
+		t.Fatalf("expected one start and one restore, got %+v", sender.messages)
+	}
+	inc := e.state.Current
+	if len(inc.Periods) != 3 || inc.Periods[0].AlertSuppressed || !inc.Periods[1].AlertSuppressed || !inc.Periods[2].AlertSuppressed {
+		t.Fatalf("unexpected periods: %+v", inc.Periods)
+	}
+	observe(t, e, apc.Online, 100)
+	*now = now.Add(3 * time.Minute)
+	observe(t, e, apc.Online, 100)
+	last := sender.messages[len(sender.messages)-1]
+	if len(sender.messages) != 3 || !strings.Contains(last.body, "Power interruptions: 3") {
+		t.Fatalf("summary must still cover every period: %+v", sender.messages)
+	}
+}
+
+func TestNewOutageAfterCooldownAlertsAgain(t *testing.T) {
+	e, sender, now := cooldownEngine(t)
+	observe(t, e, apc.Online, 100)
+	*now = now.Add(time.Minute)
+	observe(t, e, apc.OnBattery, 90)
+	*now = now.Add(time.Minute)
+	observe(t, e, apc.Online, 90)
+	if len(sender.messages) != 2 {
+		t.Fatalf("got %d", len(sender.messages))
+	}
+	*now = now.Add(15 * time.Minute)
+	observe(t, e, apc.OnBattery, 80)
+	if len(sender.messages) != 3 || !strings.Contains(sender.messages[2].subject, "Power failure") {
+		t.Fatalf("second outage not alerted: %+v", sender.messages)
+	}
+	*now = now.Add(time.Minute)
+	observe(t, e, apc.Online, 80)
+	if len(sender.messages) != 4 {
+		t.Fatalf("second restore not alerted: %+v", sender.messages)
+	}
+}
+
+func TestSuppressedOutageAlertsOnceCooldownPasses(t *testing.T) {
+	e, sender, now := cooldownEngine(t)
+	observe(t, e, apc.Online, 100)
+	*now = now.Add(time.Minute)
+	observe(t, e, apc.OnBattery, 90)
+	*now = now.Add(time.Minute)
+	observe(t, e, apc.Online, 90)
+	*now = now.Add(time.Minute)
+	observe(t, e, apc.OnBattery, 85)
+	*now = now.Add(5 * time.Minute)
+	observe(t, e, apc.OnBattery, 80)
+	if len(sender.messages) != 2 {
+		t.Fatalf("alert sent inside the cooldown: %+v", sender.messages)
+	}
+	if p := e.state.Current.Periods[1]; p.StartAttempted || p.AlertSuppressed {
+		t.Fatalf("waiting period must stay unattempted: %+v", p)
+	}
+	*now = now.Add(6 * time.Minute)
+	observe(t, e, apc.OnBattery, 75)
+	if len(sender.messages) != 3 || !strings.Contains(sender.messages[2].subject, "Power failure") {
+		t.Fatalf("start alert missing after cooldown: %+v", sender.messages)
+	}
+	*now = now.Add(time.Minute)
+	observe(t, e, apc.OnBattery, 70)
+	if len(sender.messages) != 3 {
+		t.Fatal("start alert repeated")
+	}
+	*now = now.Add(time.Minute)
+	observe(t, e, apc.Online, 70)
+	if len(sender.messages) != 4 || !strings.Contains(sender.messages[3].subject, "restored") {
+		t.Fatalf("restore alert missing for an alerted period: %+v", sender.messages)
 	}
 }

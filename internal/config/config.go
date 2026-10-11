@@ -10,6 +10,10 @@ import (
 	"sync"
 )
 
+// MaxPollIntervalSeconds bounds the polling interval: shutdown decisions are
+// made only at poll time, so a long interval could miss a whole battery window.
+const MaxPollIntervalSeconds = 60
+
 type Settings struct {
 	PollIntervalSeconds int     `json:"poll_interval_seconds"`
 	LowBatteryPercent   float64 `json:"low_battery_percent"`
@@ -17,8 +21,8 @@ type Settings struct {
 }
 
 func (s Settings) Validate() error {
-	if s.PollIntervalSeconds < 5 || s.PollIntervalSeconds > 3600 {
-		return fmt.Errorf("poll interval must be 5–3600 seconds")
+	if s.PollIntervalSeconds < 5 || s.PollIntervalSeconds > MaxPollIntervalSeconds {
+		return fmt.Errorf("poll interval must be 5–%d seconds", MaxPollIntervalSeconds)
 	}
 	if s.LowBatteryPercent < 0 || s.LowBatteryPercent > 100 {
 		return fmt.Errorf("battery warning threshold must be between 0 and 100")
@@ -51,6 +55,10 @@ func Open(path string, defaults Settings, notify func(Settings)) (*Store, error)
 	var v Settings
 	if err = json.Unmarshal(b, &v); err != nil {
 		return nil, fmt.Errorf("invalid preferences: %w", err)
+	}
+	// Older settings files allowed up to 3600 seconds; clamp rather than refuse to start.
+	if v.PollIntervalSeconds > MaxPollIntervalSeconds {
+		v.PollIntervalSeconds = MaxPollIntervalSeconds
 	}
 	if err = v.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid preferences: %w", err)

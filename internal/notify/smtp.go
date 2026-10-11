@@ -90,5 +90,8 @@ func (SMTPSender) Send(ctx context.Context, c Config, subject, body, messageID s
 	if err = w.Close(); err != nil {
 		return fmt.Errorf("SMTP delivery: %w", err)
 	}
-	return client.Quit()
+	// The server has accepted the message. A failure while closing the session
+	// must not make a delivered message look failed (it would be resent).
+	_ = client.Quit()
+	return nil
 }

@@ -16,7 +16,7 @@ function makeTimeline(root,events) {
  if (!events.length) {const p=document.createElement('p');p.className='muted';p.textContent='No events recorded in this period.';root.append(p);return;}
  for(const e of events){
   const item=document.createElement('div');item.className='event-row';
-  const dot=document.createElement('span');dot.className='dot' + (e.level==='warning'?' warning':'');
+  const dot=document.createElement('span');dot.className='dot' + (e.level==='warning'||e.level==='critical'?' warning':'');
   const info=document.createElement('div');const title=document.createElement('div');title.className='event-name';title.textContent=e.type.replaceAll('_',' ');
   const desc=document.createElement('div');desc.className='event-detail';
   const details=e.details||{};desc.textContent=[details.device,details.status,typeof details.battery_percent==='number'?details.battery_percent+'% battery':'',details.reason||''].filter(Boolean).join(' · ');
@@ -78,13 +78,12 @@ async function startSettings(){
   }catch(e){feedback.textContent='Could not save: '+e.message;}
  });
 }
-if(page==='/'){refreshDashboard();refreshFirmware();refreshRecent();setInterval(refreshDashboard,10000);setInterval(refreshFirmware,60000);setInterval(refreshRecent,60000);}
 async function refreshPowerState(){
  try {const v=await getJSON('/api/power/state');
  const text=v.enabled ? (v.active ? 'Active: '+v.phase.replaceAll('_',' ') : (v.armed?'Armed · waiting for outage':'Enabled · not yet armed')) : 'Disabled · remote actions off';
  if(el('automation-state'))el('automation-state').textContent=text;
  if(el('power-state')){el('power-state').textContent=text;el('power-state').className='state '+(v.active?'warn':v.enabled?'ok':'');}
- if(el('power-summary')){const actions=Object.entries(v.actions||{}).map(([id,a])=>id+': shutdown '+(a.shutdown_accepted?'accepted':a.shutdown_attempted?'attempted':'not attempted')+', wake '+(a.wake_sent?'sent':a.wake_attempted?'attempted':'not attempted'));
+ if(el('power-summary')){const actions=Object.entries(v.actions||{}).map(([id,a])=>{const n=a.shutdown_attempts||(a.shutdown_attempted?1:0);return id+': '+(a.shutdown_confirmed?'confirmed off':a.shutdown_gave_up?'gave up':a.shutdown_accepted?'shutdown sent':n>0?'retrying ('+n+'/5)':'shutdown pending')+(a.wake_sent?', wake sent':a.wake_attempted?', wake attempted':'');});
  el('power-summary').textContent=text+(actions.length?' · '+actions.join(' | '):'');}
  }catch(e){if(el('automation-state'))el('automation-state').textContent='Automation status unavailable';}
 }
@@ -128,7 +127,7 @@ async function startPower(){
  });
  refreshPowerState();setInterval(refreshPowerState,10000);
 }
-if(page==='/'){refreshDashboard();refreshRecent();refreshPowerState();setInterval(refreshPowerState,10000);setInterval(refreshDashboard,10000);setInterval(refreshRecent,60000);}
+if(page==='/'){refreshDashboard();refreshFirmware();refreshRecent();refreshPowerState();setInterval(refreshDashboard,10000);setInterval(refreshFirmware,60000);setInterval(refreshRecent,60000);setInterval(refreshPowerState,10000);}
 if(page==='/events'){refreshEvents();el('range').addEventListener('change',refreshEvents);el('refresh-events').addEventListener('click',refreshEvents);}
 if(page==='/settings') startSettings();
 

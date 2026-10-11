@@ -2,9 +2,11 @@ package power
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"syscall"
 	"time"
@@ -13,6 +15,9 @@ import (
 type Executor interface {
 	Shutdown(context.Context, Device) error
 	Wake(context.Context, Device) error
+	// Reachable reports whether the host still accepts TCP connections on its
+	// SSH port. Used to verify that an accepted shutdown really took effect.
+	Reachable(context.Context, Device) bool
 }
 
 // Commands use fixed executable arguments; the browser cannot supply a script.
@@ -33,10 +38,33 @@ func (e LinuxExecutor) Shutdown(ctx context.Context, d Device) error {
 	}
 	cmd := exec.CommandContext(ctx, path, args...)
 	if output, err := cmd.CombinedOutput(); err != nil {
+		code := -1
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			code = exitErr.ExitCode()
+		}
+		if sshShutdownDropped(code, output) {
+			return nil
+		}
 		return fmt.Errorf("SSH shutdown failed: %w (%s)", err, limitedOutput(output))
 	}
 	return nil
 }
+
+// sshDroppedSession matches the line OpenSSH prints when an established session
+// is closed by the server while a command is running. Pre-authentication drops
+// ("kex_exchange_identification: Connection closed by remote host", "Connection
+// closed by 10.0.0.5 port 22") deliberately do not match: the command never ran.
+var sshDroppedSession = regexp.MustCompile(`(?m)^Connection to \S+ closed by remote host\.?\r?$`)
+
+// sshShutdownDropped reports whether an ssh failure is the host closing the
+// session because it is already shutting down: ssh exits with 255 and prints
+// "Connection to HOST closed by remote host." when an established connection
+// disappears under a running command.
+func sshShutdownDropped(exitCode int, output []byte) bool {
+	return exitCode == 255 && sshDroppedSession.Match(output)
+}
+
 func limitedOutput(b []byte) string {
 	if len(b) > 300 {
 		b = b[:300]
@@ -103,4 +131,16 @@ func (e LinuxExecutor) Wake(ctx context.Context, d Device) error {
 	}
 	_, err = conn.WriteToUDP(data, dst)
 	return err
+}
+
+// Reachable dials the host's SSH port; a completed TCP handshake means the
+// host is still up. Failures (refused, timed out, cancelled) all read as down.
+func (e LinuxExecutor) Reachable(ctx context.Context, d Device) bool {
+	dialer := net.Dialer{Timeout: 3 * time.Second}
+	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(d.Host, strconv.Itoa(d.SSHPort)))
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
 }

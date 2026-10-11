@@ -29,7 +29,7 @@ The executable needs write permission to its log directory only when an event oc
 | Flag | Default | Purpose |
 | --- | --- | --- |
 | `--apcaccess` | `apcaccess` | Executable path or name in PATH |
-| `--interval` | `10s` | Poll interval |
+| `--interval` | `10s` | Poll interval (whole seconds, 5-60 s) |
 | `--timeout` | `4s` | Command timeout |
 | `--log-dir` | `/var/log/apc-ups-bridge` | Directory for event logs |
 | `--retention-days` | `365` | Whole-month log cleanup; `0` is unlimited |

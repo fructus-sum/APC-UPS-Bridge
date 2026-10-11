@@ -85,9 +85,15 @@ func cloneStatus(s Status) Status {
 
 // Poll samples once, updates in-memory state, and writes only significant
 // transitions. It returns errors from hardware or event logging to its caller.
+// A failure to write an event never prevents the in-memory state from being
+// updated: the first such error is remembered and returned after bookkeeping.
 // Poll must not be invoked concurrently.
 func (m *Monitor) Poll(ctx context.Context) error {
 	snap, readErr := m.reader.Read(ctx)
+	if readErr != nil && ctx.Err() != nil {
+		// The service is stopping; an interrupted read is not a communication loss.
+		return ctx.Err()
+	}
 	now := m.now().UTC()
 	if readErr == nil && snap.Power == apc.Unknown {
 		readErr = fmt.Errorf("ambiguous or unavailable UPS status: %q", snap.Status)
@@ -95,16 +101,25 @@ func (m *Monitor) Poll(ctx context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.status.CheckedAt = now
+	var emitErr error
+	record := func(typ, level string, details map[string]any) bool {
+		err := m.emit(now, typ, level, details)
+		if err != nil && emitErr == nil {
+			emitErr = err
+		}
+		return err == nil
+	}
 	if readErr != nil {
 		m.status.Healthy = false
 		m.status.Current = nil
 		m.status.Error = readErr.Error()
 		m.gap = true
 		if !m.bad {
-			if err := m.emit(now, "ups_communication_lost", "warning", map[string]any{"reason": readErr.Error()}); err != nil {
-				return fmt.Errorf("%v; %w", readErr, err)
-			}
-			m.bad = true
+			// Stay unmarked if the write fails so the event is retried next poll.
+			m.bad = record("ups_communication_lost", "warning", map[string]any{"reason": readErr.Error()})
+		}
+		if emitErr != nil {
+			return fmt.Errorf("%v; %w", readErr, emitErr)
 		}
 		return readErr
 	}
@@ -114,10 +129,8 @@ func (m *Monitor) Poll(ctx context.Context) error {
 	m.status.Current = &snap
 	m.status.LastGood = &snap
 	if m.bad {
-		if err := m.emit(now, "ups_communication_restored", "info", nil); err != nil {
-			return err
-		}
-		m.bad = false
+		// Stay marked if the write fails so the event is retried next poll.
+		m.bad = !record("ups_communication_restored", "info", nil)
 	}
 	if snap.Power == apc.OnBattery {
 		if !m.hasPrior || m.prior != apc.OnBattery {
@@ -128,9 +141,7 @@ func (m *Monitor) Poll(ctx context.Context) error {
 			m.outageAt = now
 			m.lowest = nil
 			m.low = false
-			if err := m.emit(now, eventType, "warning", metricDetails(snap)); err != nil {
-				return err
-			}
+			record(eventType, "warning", metricDetails(snap))
 		}
 		if snap.BatteryPercent != nil {
 			if m.lowest == nil || *snap.BatteryPercent < *m.lowest {
@@ -140,9 +151,7 @@ func (m *Monitor) Poll(ctx context.Context) error {
 		}
 		isLow := (snap.BatteryPercent != nil && *snap.BatteryPercent <= m.lowAt) || hasFlag(snap.Flags, "LOWBATT")
 		if isLow && !m.low {
-			if err := m.emit(now, "low_battery", "warning", metricDetails(snap)); err != nil {
-				return err
-			}
+			record("low_battery", "warning", metricDetails(snap))
 		}
 		m.low = isLow
 	} else if m.hasPrior && m.prior == apc.OnBattery {
@@ -156,9 +165,7 @@ func (m *Monitor) Poll(ctx context.Context) error {
 		if m.gap {
 			details["observation_interrupted"] = true
 		}
-		if err := m.emit(now, "power_restored", "info", details); err != nil {
-			return err
-		}
+		record("power_restored", "info", details)
 		m.outageAt = time.Time{}
 		m.lowest = nil
 		m.low = false
@@ -166,7 +173,7 @@ func (m *Monitor) Poll(ctx context.Context) error {
 	m.prior = snap.Power
 	m.hasPrior = true
 	m.gap = false
-	return nil
+	return emitErr
 }
 
 func (m *Monitor) emit(t time.Time, typ, level string, details map[string]any) error {
