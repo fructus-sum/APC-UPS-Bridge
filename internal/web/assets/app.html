@@ -7,6 +7,21 @@
 <header class="headline"><div><p class="eyebrow">LIVE MONITORING</p><h1>UPS overview</h1><p class="muted">Your locally connected APC UPS in real time.</p></div><span id="health" class="state">Connecting…</span></header>
 <section class="metrics" aria-label="UPS status"><article class="metric featured"><div class="metric-label">Battery charge</div><div class="metric-value" id="battery">—</div><div class="battery-track"><div id="battery-bar" class="battery-fill"></div></div><p class="hint" id="battery-note">Awaiting reading</p></article><article class="metric"><div class="metric-label">Estimated runtime</div><div class="metric-value" id="runtime">—</div><p class="hint">Reported by UPS</p></article><article class="metric"><div class="metric-label">UPS load</div><div class="metric-value" id="load">—</div><p class="hint">Current load</p></article><article class="metric"><div class="metric-label">Input voltage</div><div class="metric-value" id="voltage">—</div><p class="hint">Reported by UPS</p></article></section>
 <section class="panel"><div class="panel-head"><h2>System information</h2><span class="muted">Updates every 10 seconds</span></div><dl class="details"><div><dt>UPS</dt><dd id="upsname">—</dd></div><div><dt>Model</dt><dd id="model">—</dd></div><div><dt>Power state</dt><dd id="power">—</dd></div><div><dt>Output voltage</dt><dd id="output">—</dd></div><div><dt>Last successful reading</dt><dd id="checked">—</dd></div><div><dt>Communication</dt><dd id="communication">—</dd></div></dl></section>
+<section class="panel" aria-labelledby="firmware-heading">
+<div class="panel-head"><h2 id="firmware-heading">UPS firmware</h2><span class="muted">Reported by the connected UPS</span></div>
+<dl class="details">
+<div><dt>Installed firmware version</dt><dd id="firmware-installed">Unknown</dd></div>
+<div><dt>Firmware update status</dt><dd id="firmware-status" role="status">Checking…</dd></div>
+<div><dt>UPS ID</dt><dd id="firmware-ups-id">Unknown</dd></div>
+</dl>
+<p id="firmware-detail" class="hint">Firmware version and update status are separate: an unknown update status does not mean your firmware is outdated.</p>
+<div id="firmware-warning" class="message firmware-warning" role="alert" hidden>
+<strong>Firmware update advisory</strong>
+<p id="firmware-message"></p>
+<p class="hint" id="firmware-versions"></p>
+</div>
+<p class="hint">APC UPS Bridge only reads firmware information; it never installs or flashes firmware. <a href="https://www.se.com/us/en/faqs/FA279197/" target="_blank" rel="noopener noreferrer">Schneider Electric firmware instructions →</a></p>
+</section>
 <section class="panel"><div class="panel-head"><h2>Remote power protection</h2><a href="/power">Configure →</a></div><p><strong id="automation-state">Checking automation state…</strong></p><p class="hint">Remote shutdown and Wake-on-LAN are disabled until explicitly configured. Local Raspberry Pi shutdown is not controlled by this feature.</p></section>
 <section class="panel"><div class="panel-head"><h2>Recent events</h2><a href="/events">All events →</a></div><div id="recent-events" class="timeline"><p class="muted">Loading events…</p></div></section>
 {{else if eq .Page "/events"}}
