@@ -5,6 +5,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -13,26 +15,49 @@ import (
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/monitor"
 )
 
+// fakeExecutor is safe for concurrent use: shutdowns of one priority group run
+// in parallel. Tests read the recorded slices only between Observe calls.
 type fakeExecutor struct {
+	mu           sync.Mutex
 	shutdowns    []string
 	wakes        []string
+	checks       []string
 	failShutdown bool
 	failWake     bool
+	up           bool // what Reachable reports; the zero value means hosts are down
+	// onShutdown, when set, runs inside every Shutdown call (no fake lock held)
+	// and can block to simulate slow SSH.
+	onShutdown func(Device)
 }
 
 func (f *fakeExecutor) Shutdown(_ context.Context, d Device) error {
+	f.mu.Lock()
 	f.shutdowns = append(f.shutdowns, d.ID)
-	if f.failShutdown {
+	fail := f.failShutdown
+	hook := f.onShutdown
+	f.mu.Unlock()
+	if hook != nil {
+		hook(d)
+	}
+	if fail {
 		return errors.New("ssh failed")
 	}
 	return nil
 }
 func (f *fakeExecutor) Wake(_ context.Context, d Device) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.wakes = append(f.wakes, d.ID)
 	if f.failWake {
 		return errors.New("udp failed")
 	}
 	return nil
+}
+func (f *fakeExecutor) Reachable(_ context.Context, d Device) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.checks = append(f.checks, d.ID)
+	return f.up
 }
 
 type memoryWriter struct {
@@ -711,5 +736,305 @@ func TestCancelledContextDoesNothing(t *testing.T) {
 	observe(t, c, sample(apc.Online, 100))
 	if len(f.wakes) != 1 || c.View().Active {
 		t.Fatal("recovery did not complete after the cancelled observation")
+	}
+}
+
+func (f *fakeExecutor) shutdownCalls() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.shutdowns...)
+}
+
+func deviceWith(id string, priority int, host string) Device {
+	d := testDevice()
+	d.ID, d.Name, d.Priority, d.Host = id, id, priority, host
+	return d
+}
+
+func setDevices(t *testing.T, store *Store, devices ...Device) {
+	t.Helper()
+	cfg := store.Get()
+	cfg.Devices = devices
+	if err := store.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// armedOutage arms the controller and starts an outage, leaving it ready for
+// the first low-battery reading.
+func armedOutage(t *testing.T, c *Controller, now *time.Time) {
+	t.Helper()
+	observe(t, c, sample(apc.Online, 100))
+	observe(t, c, sample(apc.OnBattery, 100))
+	*now = now.Add(11 * time.Second)
+}
+
+// observeAsync runs Observe in the background and returns a channel with its result.
+func observeAsync(c *Controller, s monitor.Status) chan error {
+	done := make(chan error, 1)
+	go func() { done <- c.Observe(context.Background(), s) }()
+	return done
+}
+
+func waitFor(t *testing.T, ch <-chan struct{}, what string) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for %s", what)
+	}
+}
+
+func waitErr(t *testing.T, ch <-chan error) error {
+	t.Helper()
+	select {
+	case err := <-ch:
+		return err
+	case <-time.After(5 * time.Second):
+		t.Fatal("Observe did not return")
+		return nil
+	}
+}
+
+func TestSamePriorityShutdownsRunConcurrently(t *testing.T) {
+	store, path := configured(t)
+	setDevices(t, store, deviceWith("a", 5, "10.20.30.21"), deviceWith("b", 5, "10.20.30.22"))
+	w := &memoryWriter{}
+	f := &fakeExecutor{}
+	now := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
+	c := makeController(t, store, path, w, f, &now)
+	armedOutage(t, c, &now)
+
+	// Neither call returns until both have started, so a sequential
+	// implementation can never get past the first one.
+	var started sync.WaitGroup
+	started.Add(2)
+	release := make(chan struct{})
+	var once sync.Once
+	releaseAll := func() { once.Do(func() { close(release) }) }
+	t.Cleanup(releaseAll)
+	f.onShutdown = func(Device) {
+		started.Done()
+		<-release
+	}
+	done := observeAsync(c, sample(apc.OnBattery, 15))
+	both := make(chan struct{})
+	go func() { started.Wait(); close(both) }()
+	waitFor(t, both, "both same-priority shutdowns to start")
+	releaseAll()
+	if err := waitErr(t, done); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"a", "b"} {
+		if !c.View().Actions[id].ShutdownAccepted {
+			t.Fatalf("%s not recorded as accepted", id)
+		}
+	}
+}
+
+func TestLowerPriorityWaitsForHigherPriorityGroup(t *testing.T) {
+	store, path := configured(t)
+	setDevices(t, store, deviceWith("hi-a", 1, "10.20.30.21"), deviceWith("hi-b", 1, "10.20.30.22"), deviceWith("lo", 9, "10.20.30.23"))
+	w := &memoryWriter{}
+	f := &fakeExecutor{}
+	now := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
+	c := makeController(t, store, path, w, f, &now)
+	armedOutage(t, c, &now)
+
+	var started sync.WaitGroup
+	started.Add(2)
+	release := make(chan struct{})
+	var once sync.Once
+	releaseAll := func() { once.Do(func() { close(release) }) }
+	t.Cleanup(releaseAll)
+	f.onShutdown = func(d Device) {
+		if d.ID == "lo" {
+			return
+		}
+		started.Done()
+		<-release
+	}
+	done := observeAsync(c, sample(apc.OnBattery, 15))
+	both := make(chan struct{})
+	go func() { started.Wait(); close(both) }()
+	waitFor(t, both, "the high-priority group to start")
+	// Give a wrongly eager implementation time to start the lower group.
+	time.Sleep(100 * time.Millisecond)
+	if got := f.shutdownCalls(); len(got) != 2 {
+		t.Fatalf("lower priority dispatched before the higher group returned: %v", got)
+	}
+	releaseAll()
+	if err := waitErr(t, done); err != nil {
+		t.Fatal(err)
+	}
+	got := f.shutdownCalls()
+	if len(got) != 3 || got[2] != "lo" {
+		t.Fatalf("unexpected dispatch order %v", got)
+	}
+}
+
+func TestViewAndUpdateConfigDoNotWaitForShutdownIO(t *testing.T) {
+	store, path := configured(t)
+	w := &memoryWriter{}
+	f := &fakeExecutor{}
+	now := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
+	c := makeController(t, store, path, w, f, &now)
+	armedOutage(t, c, &now)
+
+	inCall := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	releaseAll := func() { once.Do(func() { close(release) }) }
+	t.Cleanup(releaseAll)
+	f.onShutdown = func(Device) {
+		close(inCall)
+		<-release
+	}
+	done := observeAsync(c, sample(apc.OnBattery, 15))
+	waitFor(t, inCall, "the shutdown call to start")
+
+	viewed := make(chan struct{})
+	go func() {
+		v := c.View()
+		if !v.Active || !v.Actions["node-1"].ShutdownAttempted {
+			t.Error("View did not show the persisted intent")
+		}
+		cfg := store.Get()
+		cfg.Enabled = false
+		if err := c.UpdateConfig(cfg); err != nil {
+			t.Error(err)
+		}
+		close(viewed)
+	}()
+	waitFor(t, viewed, "View and UpdateConfig while a shutdown call is blocked")
+	releaseAll()
+	if err := waitErr(t, done); err != nil {
+		t.Fatal(err)
+	}
+	// Automation was disabled mid-flight: the next sample clears the cycle and
+	// no further command is sent.
+	now = now.Add(10 * time.Minute)
+	observe(t, c, sample(apc.OnBattery, 10))
+	if v := c.View(); v.Active || v.Armed || len(v.Actions) != 0 {
+		t.Fatalf("disabled automation left state behind: %+v", v)
+	}
+	if len(f.shutdownCalls()) != 1 {
+		t.Fatal("command sent after automation was disabled")
+	}
+}
+
+func TestResultsAreDroppedWhenCycleWasClearedDuringIO(t *testing.T) {
+	store, path := configured(t)
+	w := &memoryWriter{}
+	f := &fakeExecutor{}
+	now := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
+	c := makeController(t, store, path, w, f, &now)
+	armedOutage(t, c, &now)
+	// Simulate the cycle being disarmed while the command is in flight. The hook
+	// takes c.mu, which would deadlock if Observe held it across executor I/O.
+	f.onShutdown = func(Device) {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		c.state = State{Actions: map[string]ActionState{}}
+		_ = c.persist()
+	}
+	observe(t, c, sample(apc.OnBattery, 15))
+	if v := c.View(); v.Active || len(v.Actions) != 0 {
+		t.Fatalf("in-flight result resurrected cleared state: %+v", v)
+	}
+	if countEvents(w, "remote_shutdown_accepted") != 0 {
+		t.Fatal("result of a discarded cycle was reported")
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "node-1") {
+		t.Fatalf("persisted state resurrected: %s", b)
+	}
+}
+
+func TestAcceptedHostStillReachableIsSentAgain(t *testing.T) {
+	store, path := configured(t)
+	w := &memoryWriter{}
+	f := &fakeExecutor{up: true}
+	now := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
+	c := makeController(t, store, path, w, f, &now)
+	triggerShutdown(t, c, &now)
+	now = now.Add(shutdownVerifyDelay - time.Second)
+	observe(t, c, sample(apc.OnBattery, 15))
+	if len(f.checks) != 0 || len(f.shutdowns) != 1 {
+		t.Fatalf("verified too early: checks=%d shutdowns=%d", len(f.checks), len(f.shutdowns))
+	}
+	now = now.Add(time.Second)
+	observe(t, c, sample(apc.OnBattery, 15))
+	if len(f.checks) != 1 || len(f.shutdowns) != 2 {
+		t.Fatalf("expected a check and a resend: checks=%d shutdowns=%d", len(f.checks), len(f.shutdowns))
+	}
+	a := c.View().Actions["node-1"]
+	if a.ShutdownAttempts != 2 || !a.ShutdownAccepted || a.ShutdownConfirmed || a.ShutdownGaveUp {
+		t.Fatalf("unexpected action state %+v", a)
+	}
+	if countEvents(w, "remote_shutdown_still_running") != 1 {
+		t.Fatal("missing still_running event")
+	}
+	// The resend restarts the verification delay.
+	now = now.Add(time.Minute)
+	observe(t, c, sample(apc.OnBattery, 15))
+	if len(f.checks) != 1 || len(f.shutdowns) != 2 {
+		t.Fatal("verified again before the delay elapsed")
+	}
+}
+
+func TestUnreachableHostIsConfirmedAndLeftAlone(t *testing.T) {
+	store, path := configured(t)
+	w := &memoryWriter{}
+	f := &fakeExecutor{up: false}
+	now := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
+	c := makeController(t, store, path, w, f, &now)
+	triggerShutdown(t, c, &now)
+	now = now.Add(shutdownVerifyDelay)
+	observe(t, c, sample(apc.OnBattery, 12))
+	if a := c.View().Actions["node-1"]; !a.ShutdownConfirmed {
+		t.Fatalf("host not confirmed down: %+v", a)
+	}
+	if countEvents(w, "remote_shutdown_confirmed") != 1 {
+		t.Fatal("missing confirmed event")
+	}
+	for i := 0; i < 5; i++ {
+		now = now.Add(10 * time.Minute)
+		observe(t, c, sample(apc.OnBattery, 12))
+	}
+	if len(f.checks) != 1 || len(f.shutdowns) != 1 {
+		t.Fatalf("confirmed host contacted again: checks=%d shutdowns=%d", len(f.checks), len(f.shutdowns))
+	}
+	// A confirmed host is still woken after recovery.
+	observe(t, c, sample(apc.Online, 100))
+	now = now.Add(31 * time.Second)
+	observe(t, c, sample(apc.Online, 100))
+	if len(f.wakes) != 1 {
+		t.Fatalf("wake count %d", len(f.wakes))
+	}
+}
+
+func TestStillRunningHostGivesUpAfterMaxAttempts(t *testing.T) {
+	store, path := configured(t)
+	w := &memoryWriter{}
+	f := &fakeExecutor{up: true}
+	now := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
+	c := makeController(t, store, path, w, f, &now)
+	triggerShutdown(t, c, &now)
+	for i := 0; i < 14; i++ {
+		now = now.Add(shutdownVerifyDelay)
+		observe(t, c, sample(apc.OnBattery, 12))
+	}
+	if len(f.shutdowns) != maxShutdownAttempts || len(f.checks) != maxShutdownAttempts {
+		t.Fatalf("shutdowns=%d checks=%d, want %d each", len(f.shutdowns), len(f.checks), maxShutdownAttempts)
+	}
+	if got := countEvents(w, "remote_shutdown_gave_up"); got != 1 {
+		t.Fatalf("gave up events %d", got)
+	}
+	if a := c.View().Actions["node-1"]; !a.ShutdownGaveUp || a.ShutdownConfirmed {
+		t.Fatalf("unexpected action state %+v", a)
 	}
 }

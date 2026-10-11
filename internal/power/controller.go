@@ -21,6 +21,9 @@ const (
 	// Shutting down an already shutting-down host is idempotent.
 	maxShutdownAttempts = 5
 	shutdownRetryDelay  = 30 * time.Second
+	// An accepted shutdown is trusted only once the host stops answering on its
+	// SSH port. The first check is made this long after the command was accepted.
+	shutdownVerifyDelay = 2 * time.Minute
 	// If mains is stable but the battery charge is unknown or never reaches the
 	// recovery threshold, the cycle still completes after this long.
 	recoveryBatteryTimeout = time.Hour
@@ -30,15 +33,19 @@ const (
 // Every action is persisted as attempted BEFORE executing it, and the attempt
 // counter is persisted with it, so retries stay bounded across crashes.
 // Shutdown commands are retried (at most maxShutdownAttempts, one per
-// shutdownRetryDelay) until one is accepted. A crash between intent and
-// execution costs one attempt rather than silently skipping the host. Wake
-// packets remain strictly at-most-once: a failed or lost WoL packet is never
-// resent automatically.
+// shutdownRetryDelay) until one is accepted, and an accepted host that is still
+// answering after shutdownVerifyDelay is sent another command. A crash between
+// intent and execution costs one attempt rather than silently skipping the
+// host. Wake packets remain strictly at-most-once: a failed or lost WoL packet
+// is never resent automatically.
 type ActionState struct {
 	ShutdownAttempted bool      `json:"shutdown_attempted"`
 	ShutdownAttempts  int       `json:"shutdown_attempts,omitempty"`
 	NextShutdownRetry time.Time `json:"next_shutdown_retry,omitempty"`
 	ShutdownAccepted  bool      `json:"shutdown_accepted"`
+	LastShutdownAt    time.Time `json:"last_shutdown_at,omitempty"`
+	ShutdownConfirmed bool      `json:"shutdown_confirmed,omitempty"`
+	ShutdownGaveUp    bool      `json:"shutdown_gave_up,omitempty"`
 	WakeAttempted     bool      `json:"wake_attempted"`
 	WakeSent          bool      `json:"wake_sent"`
 }
@@ -71,13 +78,16 @@ type View struct {
 }
 
 type Controller struct {
-	mu       sync.Mutex
-	store    *Store
-	path     string
-	writer   events.Writer
-	executor Executor
-	now      func() time.Time
-	state    State
+	// observeMu serializes whole Observe calls. mu guards state and is never
+	// held across executor I/O, so View and UpdateConfig stay responsive.
+	observeMu sync.Mutex
+	mu        sync.Mutex
+	store     *Store
+	path      string
+	writer    events.Writer
+	executor  Executor
+	now       func() time.Time
+	state     State
 }
 
 func OpenController(store *Store, statePath string, writer events.Writer, executor Executor) (*Controller, error) {
@@ -154,13 +164,19 @@ func (c *Controller) event(typ, level string, data map[string]any) error {
 // Observe is run by the single monitor loop; it intentionally never uses stale
 // LastGood values to make safety decisions. No work is done on UNKNOWN/failed polls.
 //
+// Observe runs in three phases so that slow SSH/UDP I/O never blocks View or
+// UpdateConfig: (a) under c.mu, decide what is due and persist the intent;
+// (b) with no lock held, run the executor calls (concurrently within one
+// priority group); (c) under c.mu again, record the results. observeMu keeps
+// whole Observe calls from interleaving.
+//
 // Event log writes are best-effort: a failing log never aborts Observe, skips a
 // state change or skips an executor call. The first event error is returned at
 // the end so the caller can report it. State persistence errors still abort,
 // because acting without a durable record of intent is unsafe.
 func (c *Controller) Observe(ctx context.Context, s monitor.Status) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.observeMu.Lock()
+	defer c.observeMu.Unlock()
 	var eventErr error
 	emit := func(typ, level string, data map[string]any) {
 		if err := c.event(typ, level, data); err != nil && eventErr == nil {
@@ -176,30 +192,88 @@ func (c *Controller) Observe(ctx context.Context, s monitor.Status) error {
 	return nil
 }
 
-func (c *Controller) observe(ctx context.Context, s monitor.Status, emit func(typ, level string, data map[string]any)) error {
+type emitFunc func(typ, level string, data map[string]any)
+
+// decision is the work chosen by the decide phase. Its intents are already
+// persisted when it is returned.
+type decision struct {
+	startedAt  time.Time // identity of the power cycle the work belongs to
+	doShutdown bool
+	devices    []Device // priority-ordered devices of the frozen cycle
+	wakes      []Device
+}
+
+type shutdownJob struct {
+	dev    Device
+	verify bool // liveness check instead of a shutdown command
+}
+
+type shutdownResult struct {
+	err       error
+	reachable bool
+}
+
+type pendingEvent struct {
+	typ, level string
+	data       map[string]any
+}
+
+func (c *Controller) locked(fn func() error) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return fn()
+}
+
+// cycleIs reports whether the power cycle that started at startedAt is still
+// the live one. Callers hold c.mu.
+func (c *Controller) cycleIs(startedAt time.Time) bool {
+	return c.state.Active && c.state.StartedAt.Equal(startedAt)
+}
+
+func (c *Controller) observe(ctx context.Context, s monitor.Status, emit emitFunc) error {
 	// A cancelled context means the service is stopping: the snapshot may be
 	// stale and any command would fail, so do nothing and mutate no state.
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	var d decision
+	if err := c.locked(func() error {
+		var err error
+		d, err = c.decide(s, emit)
+		return err
+	}); err != nil {
+		return err
+	}
+	switch {
+	case len(d.wakes) > 0:
+		return c.runWakes(ctx, d, emit)
+	case d.doShutdown:
+		return c.runShutdowns(ctx, d, emit)
+	}
+	return nil
+}
+
+// decide applies the state machine to one sample. Callers hold c.mu; it
+// performs no executor I/O.
+func (c *Controller) decide(s monitor.Status, emit emitFunc) (decision, error) {
 	now := c.now().UTC()
 	cfg := c.store.Get()
 	if !cfg.Enabled {
 		if c.state.Active || c.state.Armed {
 			c.state = State{Actions: map[string]ActionState{}}
 			if err := c.persist(); err != nil {
-				return err
+				return decision{}, err
 			}
 			emit("power_automation_disarmed", "warning", nil)
 		}
-		return nil
+		return decision{}, nil
 	}
 	if !s.Healthy || s.Current == nil || s.Current.Power == apc.Unknown {
 		if c.state.Active && !c.state.RecoverySince.IsZero() {
 			c.state.RecoverySince = time.Time{}
-			return c.persist()
+			return decision{}, c.persist()
 		}
-		return nil
+		return decision{}, nil
 	}
 	snap := s.Current
 	switch snap.Power {
@@ -207,29 +281,29 @@ func (c *Controller) observe(ctx context.Context, s monitor.Status, emit func(ty
 		if !c.state.Active {
 			if !c.state.Armed {
 				c.state.Armed = true
-				return c.persist()
+				return decision{}, c.persist()
 			}
-			return nil
+			return decision{}, nil
 		}
 		if c.state.RecoverySince.IsZero() {
 			c.state.RecoverySince = now
 			if err := c.persist(); err != nil {
-				return err
+				return decision{}, err
 			}
 			emit("power_recovery_confirmation_started", "info", nil)
-			return nil
+			return decision{}, nil
 		}
 		rules := c.state.CycleConfig
 		stable := now.Sub(c.state.RecoverySince)
 		if stable < time.Duration(rules.RecoveryStableSeconds)*time.Second || hasFlag(snap.Flags, "LOWBATT") {
-			return nil
+			return decision{}, nil
 		}
 		if snap.BatteryPercent == nil || *snap.BatteryPercent < rules.RecoveryBatteryPercent {
 			// Keep waiting for the charge to recover, but do not wait forever: a UPS
 			// that never reports (or never reaches) the threshold must not leave
 			// hosts powered off indefinitely once mains has been stable for long.
 			if stable < recoveryBatteryTimeout {
-				return nil
+				return decision{}, nil
 			}
 			details := map[string]any{"stable_seconds": int(stable.Seconds()), "required_battery_percent": rules.RecoveryBatteryPercent}
 			if snap.BatteryPercent != nil {
@@ -241,6 +315,7 @@ func (c *Controller) observe(ctx context.Context, s monitor.Status, emit func(ty
 		// approved with the same MAC/hostname in the current configuration.
 		ordered := append([]Device(nil), rules.Devices...)
 		sortDevices(ordered)
+		var wakes []Device
 		for _, d := range ordered {
 			a := c.state.Actions[d.ID]
 			if !a.ShutdownAccepted || a.WakeAttempted || !d.WakeEnabled {
@@ -251,43 +326,26 @@ func (c *Controller) observe(ctx context.Context, s monitor.Status, emit func(ty
 			}
 			a.WakeAttempted = true
 			c.state.Actions[d.ID] = a
-			if err := c.persist(); err != nil {
-				return err
-			}
-			emit("remote_wake_attempt", "info", map[string]any{"device": d.ID})
-			err := c.executor.Wake(ctx, d)
-			if err == nil {
-				a.WakeSent = true
-			}
-			c.state.Actions[d.ID] = a
-			if saveErr := c.persist(); saveErr != nil {
-				return saveErr
-			}
-			if err != nil {
-				emit("remote_wake_failed", "warning", map[string]any{"device": d.ID, "reason": err.Error()})
-			} else {
-				emit("remote_wake_sent", "info", map[string]any{"device": d.ID})
-			}
+			wakes = append(wakes, d)
 		}
-		// Complete the cycle only after all eligible wake attempts are persisted.
-		// Future ONLINE samples cannot resend magic packets after restart.
-		c.state.Active = false
-		c.state.StartedAt = time.Time{}
-		c.state.RecoverySince = time.Time{}
-		c.state.ShutdownTriggeredAt = time.Time{}
-		c.state.CycleConfig = Config{}
-		c.state.Actions = map[string]ActionState{}
+		if len(wakes) == 0 {
+			return decision{}, c.completeCycle(emit)
+		}
+		// Wake intents are persisted before any packet is sent, so a crash can
+		// never cause a second packet.
 		if err := c.persist(); err != nil {
-			return err
+			return decision{}, err
 		}
-		emit("power_automation_cycle_completed", "info", nil)
-		return nil
+		for _, d := range wakes {
+			emit("remote_wake_attempt", "info", map[string]any{"device": d.ID})
+		}
+		return decision{startedAt: c.state.StartedAt, wakes: wakes}, nil
 	case apc.OnBattery:
 		if !c.state.Active {
 			// A service booting into an outage without a prior armed ONLINE sample may
 			// observe that state but must never spontaneously start shutdowns.
 			if !c.state.Armed {
-				return nil
+				return decision{}, nil
 			}
 			c.state.Active = true
 			c.state.StartedAt = now
@@ -296,21 +354,21 @@ func (c *Controller) observe(ctx context.Context, s monitor.Status, emit func(ty
 			c.state.CycleConfig = cfg
 			c.state.Actions = map[string]ActionState{}
 			if err := c.persist(); err != nil {
-				return err
+				return decision{}, err
 			}
 			emit("power_automation_cycle_started", "warning", nil)
-			return nil
+			return decision{}, nil
 		}
 		if !c.state.RecoverySince.IsZero() {
 			c.state.RecoverySince = time.Time{}
 			if err := c.persist(); err != nil {
-				return err
+				return decision{}, err
 			}
 			emit("power_recovery_interrupted", "warning", nil)
 		}
 		rules := c.state.CycleConfig
 		if now.Sub(c.state.StartedAt) < time.Duration(rules.OnBatteryDelaySeconds)*time.Second {
-			return nil
+			return decision{}, nil
 		}
 		// Once the shutdown condition has been met in this cycle it stays met: a
 		// reading that flickers back above the threshold must not stop retries.
@@ -318,49 +376,260 @@ func (c *Controller) observe(ctx context.Context, s monitor.Status, emit func(ty
 			batteryLow := snap.BatteryPercent != nil && *snap.BatteryPercent <= rules.ShutdownBatteryPercent
 			runtimeLow := rules.ShutdownRuntimeMinutes > 0 && snap.RuntimeMinutes != nil && *snap.RuntimeMinutes <= rules.ShutdownRuntimeMinutes
 			if !batteryLow && !runtimeLow && !hasFlag(snap.Flags, "LOWBATT") {
-				return nil
+				return decision{}, nil
 			}
 			c.state.ShutdownTriggeredAt = now
 			if err := c.persist(); err != nil {
-				return err
+				return decision{}, err
 			}
 		}
 		ordered := append([]Device(nil), rules.Devices...)
 		sortDevices(ordered)
-		for _, d := range ordered {
-			a := c.state.Actions[d.ID]
-			attempts := a.shutdownAttemptCount()
-			if !d.ShutdownEnabled || a.ShutdownAccepted || attempts >= maxShutdownAttempts || now.Before(a.NextShutdownRetry) || !stillApprovedShutdown(cfg, d) {
-				continue
+		return decision{startedAt: c.state.StartedAt, doShutdown: true, devices: ordered}, nil
+	}
+	return decision{}, nil
+}
+
+// completeCycle ends the current outage cycle. Callers hold c.mu.
+func (c *Controller) completeCycle(emit emitFunc) error {
+	c.state.Active = false
+	c.state.StartedAt = time.Time{}
+	c.state.RecoverySince = time.Time{}
+	c.state.ShutdownTriggeredAt = time.Time{}
+	c.state.CycleConfig = Config{}
+	c.state.Actions = map[string]ActionState{}
+	if err := c.persist(); err != nil {
+		return err
+	}
+	emit("power_automation_cycle_completed", "info", nil)
+	return nil
+}
+
+// runParallel calls fn(i) for i in [0,n) concurrently and waits for all of them.
+func runParallel(n int, fn func(i int)) {
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			fn(i)
+		}(i)
+	}
+	wg.Wait()
+}
+
+// runWakes sends the already-persisted wake intents without holding c.mu, then
+// records the outcome and completes the cycle. Packets are never resent.
+func (c *Controller) runWakes(ctx context.Context, d decision, emit emitFunc) error {
+	errs := make([]error, len(d.wakes))
+	runParallel(len(d.wakes), func(i int) { errs[i] = c.executor.Wake(ctx, d.wakes[i]) })
+	return c.locked(func() error {
+		if !c.cycleIs(d.startedAt) {
+			return nil // disarmed while sending: never resurrect cleared state
+		}
+		for i, dev := range d.wakes {
+			a := c.state.Actions[dev.ID]
+			if errs[i] == nil {
+				a.WakeSent = true
 			}
-			attempts++
-			a.ShutdownAttempted = true
-			a.ShutdownAttempts = attempts
-			a.NextShutdownRetry = now.Add(shutdownRetryDelay)
-			c.state.Actions[d.ID] = a
-			if err := c.persist(); err != nil {
-				return err
+			c.state.Actions[dev.ID] = a
+		}
+		if err := c.persist(); err != nil {
+			return err
+		}
+		for i, dev := range d.wakes {
+			if errs[i] != nil {
+				emit("remote_wake_failed", "warning", map[string]any{"device": dev.ID, "reason": errs[i].Error()})
+			} else {
+				emit("remote_wake_sent", "info", map[string]any{"device": dev.ID})
 			}
-			emit("remote_shutdown_attempt", "warning", map[string]any{"device": d.ID, "attempt": attempts, "max_attempts": maxShutdownAttempts})
-			err := c.executor.Shutdown(ctx, d)
-			if err == nil {
-				a.ShutdownAccepted = true
-			}
-			c.state.Actions[d.ID] = a
-			if saveErr := c.persist(); saveErr != nil {
-				return saveErr
-			}
-			if err == nil {
-				emit("remote_shutdown_accepted", "warning", map[string]any{"device": d.ID, "attempt": attempts})
-				continue
-			}
-			emit("remote_shutdown_failed", "warning", map[string]any{"device": d.ID, "reason": err.Error(), "attempt": attempts, "max_attempts": maxShutdownAttempts})
-			if attempts >= maxShutdownAttempts {
-				emit("remote_shutdown_gave_up", "critical", map[string]any{"device": d.ID, "attempts": attempts, "reason": err.Error()})
-			}
+		}
+		// Complete the cycle only after all eligible wake attempts are persisted.
+		// Future ONLINE samples cannot resend magic packets after restart.
+		return c.completeCycle(emit)
+	})
+}
+
+// groupByPriority splits priority-ordered devices into runs of equal priority.
+func groupByPriority(ordered []Device) [][]Device {
+	var groups [][]Device
+	for i, d := range ordered {
+		if i == 0 || d.Priority != ordered[i-1].Priority {
+			groups = append(groups, nil)
+		}
+		groups[len(groups)-1] = append(groups[len(groups)-1], d)
+	}
+	return groups
+}
+
+// runShutdowns dispatches each priority group concurrently, waiting for one
+// group's commands to return before starting the next.
+func (c *Controller) runShutdowns(ctx context.Context, d decision, emit emitFunc) error {
+	for _, group := range groupByPriority(d.devices) {
+		proceed, err := c.shutdownGroup(ctx, d.startedAt, group, emit)
+		if err != nil || !proceed {
+			return err
 		}
 	}
 	return nil
+}
+
+func (c *Controller) shutdownGroup(ctx context.Context, startedAt time.Time, group []Device, emit emitFunc) (bool, error) {
+	var jobs []shutdownJob
+	proceed := true
+	err := c.locked(func() error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		cfg := c.store.Get()
+		if !cfg.Enabled || !c.cycleIs(startedAt) {
+			proceed = false // disarmed or replaced meanwhile: take no further action
+			return nil
+		}
+		var err error
+		jobs, err = c.planShutdowns(group, cfg, c.now().UTC(), emit)
+		return err
+	})
+	if err != nil || !proceed {
+		return false, err
+	}
+	for len(jobs) > 0 {
+		results := make([]shutdownResult, len(jobs))
+		runParallel(len(jobs), func(i int) {
+			if jobs[i].verify {
+				results[i].reachable = c.executor.Reachable(ctx, jobs[i].dev)
+			} else {
+				results[i].err = c.executor.Shutdown(ctx, jobs[i].dev)
+			}
+		})
+		done := jobs
+		jobs = nil
+		err := c.locked(func() error {
+			if !c.cycleIs(startedAt) {
+				proceed = false // disarmed while commands were in flight
+				return nil
+			}
+			var err error
+			jobs, err = c.recordShutdowns(ctx, done, results, emit)
+			return err
+		})
+		if err != nil || !proceed {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+// planShutdowns chooses the due shutdown commands and liveness checks for one
+// priority group and persists their intents. Callers hold c.mu.
+func (c *Controller) planShutdowns(group []Device, cfg Config, now time.Time, emit emitFunc) ([]shutdownJob, error) {
+	var jobs []shutdownJob
+	var events []pendingEvent
+	changed := false
+	for _, d := range group {
+		a := c.state.Actions[d.ID]
+		if !d.ShutdownEnabled || a.ShutdownConfirmed || a.ShutdownGaveUp || !stillApprovedShutdown(cfg, d) {
+			continue
+		}
+		attempts := a.shutdownAttemptCount()
+		if !a.ShutdownAccepted && attempts >= maxShutdownAttempts {
+			// Safety net for state saved before give-up was tracked.
+			a.ShutdownGaveUp = true
+			c.state.Actions[d.ID] = a
+			changed = true
+			events = append(events, pendingEvent{"remote_shutdown_gave_up", "critical", map[string]any{"device": d.ID, "attempts": attempts}})
+			continue
+		}
+		if now.Before(a.NextShutdownRetry) {
+			continue
+		}
+		if a.ShutdownAccepted {
+			// The command was accepted; trust it only once the host is seen to be down.
+			if now.Before(a.LastShutdownAt.Add(shutdownVerifyDelay)) {
+				continue
+			}
+			jobs = append(jobs, shutdownJob{dev: d, verify: true})
+			continue
+		}
+		jobs = append(jobs, c.beginShutdown(d, &events, now))
+		changed = true
+	}
+	if changed {
+		if err := c.persist(); err != nil {
+			return nil, err
+		}
+	}
+	for _, e := range events {
+		emit(e.typ, e.level, e.data)
+	}
+	return jobs, nil
+}
+
+// beginShutdown records the intent to send one more shutdown command. Callers
+// hold c.mu and persist afterwards, before any I/O.
+func (c *Controller) beginShutdown(d Device, events *[]pendingEvent, now time.Time) shutdownJob {
+	a := c.state.Actions[d.ID]
+	attempts := a.shutdownAttemptCount() + 1
+	a.ShutdownAttempted = true
+	a.ShutdownAttempts = attempts
+	a.NextShutdownRetry = now.Add(shutdownRetryDelay)
+	c.state.Actions[d.ID] = a
+	*events = append(*events, pendingEvent{"remote_shutdown_attempt", "warning", map[string]any{"device": d.ID, "attempt": attempts, "max_attempts": maxShutdownAttempts}})
+	return shutdownJob{dev: d}
+}
+
+// recordShutdowns applies command and liveness results, persists them, and
+// returns follow-up shutdown commands (already persisted as intents) for hosts
+// that were accepted but are still running. Callers hold c.mu.
+func (c *Controller) recordShutdowns(ctx context.Context, jobs []shutdownJob, results []shutdownResult, emit emitFunc) ([]shutdownJob, error) {
+	now := c.now().UTC()
+	var next []shutdownJob
+	var events []pendingEvent
+	for i, j := range jobs {
+		id := j.dev.ID
+		a := c.state.Actions[id]
+		attempts := a.shutdownAttemptCount()
+		r := results[i]
+		switch {
+		case j.verify:
+			if ctx.Err() != nil {
+				continue // a cancelled check says nothing about the host
+			}
+			if !r.reachable {
+				a.ShutdownConfirmed = true
+				c.state.Actions[id] = a
+				events = append(events, pendingEvent{"remote_shutdown_confirmed", "warning", map[string]any{"device": id}})
+				continue
+			}
+			events = append(events, pendingEvent{"remote_shutdown_still_running", "warning", map[string]any{"device": id, "attempt": attempts, "max_attempts": maxShutdownAttempts}})
+			if attempts >= maxShutdownAttempts {
+				a.ShutdownGaveUp = true
+				c.state.Actions[id] = a
+				events = append(events, pendingEvent{"remote_shutdown_gave_up", "critical", map[string]any{"device": id, "attempts": attempts, "reason": "host still reachable"}})
+				continue
+			}
+			next = append(next, c.beginShutdown(j.dev, &events, now))
+		case r.err == nil:
+			a.ShutdownAccepted = true
+			a.LastShutdownAt = now
+			c.state.Actions[id] = a
+			events = append(events, pendingEvent{"remote_shutdown_accepted", "warning", map[string]any{"device": id, "attempt": attempts}})
+		default:
+			events = append(events, pendingEvent{"remote_shutdown_failed", "warning", map[string]any{"device": id, "reason": r.err.Error(), "attempt": attempts, "max_attempts": maxShutdownAttempts}})
+			if attempts >= maxShutdownAttempts {
+				a.ShutdownGaveUp = true
+				c.state.Actions[id] = a
+				events = append(events, pendingEvent{"remote_shutdown_gave_up", "critical", map[string]any{"device": id, "attempts": attempts, "reason": r.err.Error()}})
+			}
+		}
+	}
+	if err := c.persist(); err != nil {
+		return nil, err
+	}
+	for _, e := range events {
+		emit(e.typ, e.level, e.data)
+	}
+	return next, nil
 }
 func stillApproved(cfg Config, original Device) bool {
 	for _, d := range cfg.Devices {

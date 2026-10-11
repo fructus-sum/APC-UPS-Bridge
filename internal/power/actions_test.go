@@ -68,3 +68,27 @@ func TestSSHShutdownDroppedClassification(t *testing.T) {
 		})
 	}
 }
+
+func TestLinuxExecutorReachable(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := testDevice()
+	d.Host = "127.0.0.1"
+	d.SSHPort = listener.Addr().(*net.TCPAddr).Port
+	if !(LinuxExecutor{}).Reachable(context.Background(), d) {
+		t.Fatal("listening port reported unreachable")
+	}
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if (LinuxExecutor{}).Reachable(context.Background(), d) {
+		t.Fatal("closed port reported reachable")
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if (LinuxExecutor{}).Reachable(cancelled, d) {
+		t.Fatal("cancelled check reported reachable")
+	}
+}

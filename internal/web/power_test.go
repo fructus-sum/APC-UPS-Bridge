@@ -20,6 +20,7 @@ type inertExec struct{}
 
 func (inertExec) Shutdown(context.Context, power.Device) error { return nil }
 func (inertExec) Wake(context.Context, power.Device) error     { return nil }
+func (inertExec) Reachable(context.Context, power.Device) bool { return false }
 func TestPowerRoutesAuthorizedAndValidated(t *testing.T) {
 	dir := t.TempDir()
 	authpath := filepath.Join(dir, "auth.json")

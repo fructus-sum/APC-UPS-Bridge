@@ -15,6 +15,9 @@ import (
 type Executor interface {
 	Shutdown(context.Context, Device) error
 	Wake(context.Context, Device) error
+	// Reachable reports whether the host still accepts TCP connections on its
+	// SSH port. Used to verify that an accepted shutdown really took effect.
+	Reachable(context.Context, Device) bool
 }
 
 // Commands use fixed executable arguments; the browser cannot supply a script.
@@ -128,4 +131,16 @@ func (e LinuxExecutor) Wake(ctx context.Context, d Device) error {
 	}
 	_, err = conn.WriteToUDP(data, dst)
 	return err
+}
+
+// Reachable dials the host's SSH port; a completed TCP handshake means the
+// host is still up. Failures (refused, timed out, cancelled) all read as down.
+func (e LinuxExecutor) Reachable(ctx context.Context, d Device) bool {
+	dialer := net.Dialer{Timeout: 3 * time.Second}
+	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(d.Host, strconv.Itoa(d.SSHPort)))
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
 }
