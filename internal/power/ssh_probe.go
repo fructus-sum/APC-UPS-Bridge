@@ -43,7 +43,6 @@ func (e LinuxExecutor) TestSSH(ctx context.Context, d Device) SSHProbeResult {
 		"-o", "LogLevel=VERBOSE",
 		"-o", "PermitLocalCommand=no",
 		"-o", "ClearAllForwardings=yes",
-		"-o", "RemoteCommand=none",
 		"-p", strconv.Itoa(d.SSHPort),
 		"--", d.SSHUser + "@" + d.Host,
 	}
