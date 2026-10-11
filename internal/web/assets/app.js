@@ -40,17 +40,29 @@ async function refreshDashboard(){
  }catch(err){el('health').textContent='Unable to load status';el('health').className='state error';}
 }
 async function refreshFirmware(){
- const warning=el('firmware-warning');
- if(!warning)return;
+ const installed=el('firmware-installed'),status=el('firmware-status'),id=el('firmware-ups-id');
+ const detail=el('firmware-detail'),warning=el('firmware-warning');
+ if(!installed||!status||!id||!detail||!warning)return;
  try {
   const fw=await getJSON('/api/firmware');
+  // A raw installed revision can be reported even when update availability is unknown.
+  installed.textContent=fw.installed?.trim()||'Unknown (not reported by UPS)';
+  id.textContent=fw.ups_id||'Unknown';
+  const labels={outdated:'Update listed',current:'Matches local reference',not_upgradeable:'Not user-upgradeable',unknown:'Unknown',unavailable:'UPS unavailable'};
+  status.textContent=labels[fw.status]||'Unknown';
+  detail.textContent=fw.message||'Update availability cannot be verified.';
   warning.hidden=fw.status!=='outdated';
   if(fw.status==='outdated'){
    el('firmware-message').textContent=fw.message;
    el('firmware-versions').textContent='Installed: '+fw.installed+' · Latest referenced: UPS '+fw.latest+' · Reference reviewed: '+fw.reference_date;
-   // The update link is a fixed trusted Schneider Electric URL, not device data.
   }
- } catch(e) {warning.hidden=true;}
+ }catch(e){
+  installed.textContent='Unknown (unable to check)';
+  status.textContent='Unknown';
+  id.textContent='Unknown';
+  detail.textContent='Could not load firmware details from the UPS Bridge.';
+  warning.hidden=true;
+ }
 }
 async function refreshRecent(){try{makeTimeline(el('recent-events'),await getJSON('/api/events?limit=5&days=30'));}catch(e){el('recent-events').textContent='Event history unavailable';}}
 async function refreshEvents(){
