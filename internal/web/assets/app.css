@@ -16,3 +16,4 @@
 .input-line{background:#1978ad}.output-line{background:#20916a}.load-line{background:#b57922}
 
 .key-box{width:100%;font-family:ui-monospace,Consolas,monospace;font-size:.8rem}pre.cmd{white-space:pre-wrap;overflow-wrap:anywhere;background:#f0f4f6;padding:8px 10px;border-radius:6px;font-size:.8rem}
+.device-status{margin:0 0 12px}.device-status .state{display:inline-block}.device-status-list{list-style:none;margin:0;padding:0}.device-status-list li{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:6px 0}.device-status-list li+li{border-top:1px solid #e3e9ed}

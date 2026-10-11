@@ -36,3 +36,19 @@ Only hosts with an accepted prior shutdown, explicit wake permission and unchang
 Power protection state is stored at `/var/lib/apc-ups-bridge/power-state.json`, separate from configurable rules in `/etc/apc-ups-bridge/power.json`. Corrupt state fails closed instead of guessing which commands were already attempted. Always keep both files across upgrades or power cycles.
 
 **Safety:** Test shutdown order, SSH host-key verification, service permissions, abrupt Pi restarts, battery thresholds and WoL on noncritical equipment before relying on automatic protection. Use [installation guidance](INSTALL.md) for service setup and [email documentation](EMAIL-NOTIFICATIONS.md) for the separate full-charge report completion rule.
+
+## Device online status
+
+The Power page and the dashboard show whether each configured device is online. This status is display-only: it is kept in memory (nothing is written to disk or the event log), is lost on restart, and never drives shutdown or wake decisions. No SSH login is ever made for it.
+
+Each device has an **Online check** setting:
+
+- **Ping** (default): one ICMP echo request per device every 60 seconds (plus a few seconds of random jitter), using an unprivileged ICMP socket that is closed immediately. No SSH or TCP traffic is sent; host names are resolved through the system resolver as usual.
+- **SSH port**: a TCP connect to the device's SSH port that is closed immediately. No login, no session, and no connection is ever held open. Some SSH servers log this as a disconnect before login.
+- **Off**: the device is not checked.
+
+Devices are checked one at a time. An online device is only shown as offline after two consecutive missed checks. After you save the configuration, one extra cycle runs shortly afterwards (at most one extra cycle per 15 seconds).
+
+Ping needs the service's group to be allowed by the kernel. Check with `sysctl net.ipv4.ping_group_range`; current Debian and Raspberry Pi OS releases typically allow all groups. If the range excludes the service group, the device shows as unavailable: choose **SSH port** for it or adjust the sysctl. Hosts that block ping show as offline; choose **SSH port** or **Off** for them.
+
+fail2ban in its default sshd mode does not count connect-only checks, but aggressive modes may, so prefer **Ping**.
