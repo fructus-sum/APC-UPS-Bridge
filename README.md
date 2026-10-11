@@ -35,7 +35,7 @@ After the repository is public, the installer also supports:
 curl -fsSL https://raw.githubusercontent.com/fructus-sum/APC-UPS-Bridge/main/scripts/install.sh | sudo bash
 ```
 
-The installer asks for the web port (default **8080**) and an administrator password on an interactive first installation. By default the **installed service listens on all LAN interfaces** (`0.0.0.0:8080`); standalone runs of the binary default to **localhost only** (`127.0.0.1:8080`). The installer prints a suggested browser URL after installing.
+The **Settings** page can configure the local Pi's native apcupsd shutdown percentage and remaining-runtime threshold through a restricted systemd helper, independently of remote-machine thresholds. It refuses changes without confirmed ONLINE mains, backs up the current configuration, and retains a read-only/existing-settings mode.\n\nThe installer asks for the web port (default **8080**) and an administrator password on an interactive first installation. By default the **installed service listens on all LAN interfaces** (`0.0.0.0:8080`); standalone runs of the binary default to **localhost only** (`127.0.0.1:8080`). The installer prints a suggested browser URL after installing.
 
 It uses Go 1.22+ if available, otherwise downloads and verifies a temporary Go toolchain, builds the executable, and removes temporary build files. It installs `apcupsd` if missing; **only a newly installed apcupsd on a new Bridge host** is auto-configured for USB. An existing apcupsd configuration is preserved unless you explicitly pass `--configure-apcupsd`. The bridge runs under a dedicated `apc-ups-bridge` no-login system account and starts through systemd.
 
