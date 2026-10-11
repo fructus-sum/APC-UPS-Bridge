@@ -10,6 +10,7 @@ APC UPS Bridge is a single Go application for monitoring one USB APC UPS through
 | `internal/apc/` | Executes and parses `apcaccess status` |
 | `internal/monitor/` | Periodic UPS readings, health classification, cached status and transition events |
 | `internal/events/` | Event-only JSONL files, retention, CSV/report reads |
+| `internal/history/` | Bounded 15-minute voltage and load samples, 30-day retention and graph data |
 | `internal/auth/` | Administrator password hashes, sessions, login limits and CSRF |
 | `internal/config/` | Monitoring preferences and atomic file updates |
 | `internal/power/` | Protected-host rules, durable outage state, SSH shutdown and UDP Wake-on-LAN |
@@ -23,7 +24,7 @@ APC UPS Bridge is a single Go application for monitoring one USB APC UPS through
 
 1. `apcupsd` communicates with the USB UPS. The bridge runs `apcaccess status` on a configurable 5–60-second interval (10 seconds by default).
 2. The monitor caches the current reading in memory, with an explicit unhealthy/unknown state for absent or contradictory data. Web requests read the cache, not the USB device.
-3. Significant transitions append event records; routine samples do not produce time-series data.
+3. Significant transitions append event records; routine samples are not written to event logs. One voltage and load sample per 15 minutes is kept separately for 30 days for the history graphs.
 4. If remote power automation is explicitly enabled, its controller evaluates each observation, persists action intent/state, and coordinates approved remote-host SSH shutdowns and WoL recovery.
 5. A separate email worker handles outage/restoration alerts and pending recovery summaries without holding up remote power actions or dashboard requests.
 6. One standard-library HTTP server serves administrator login, dashboard, history, power rules, email settings and monitoring settings. Firmware warnings are read-only.
@@ -41,6 +42,7 @@ The normal binary defaults to `127.0.0.1:8080`. The interactive installer defaul
 | `/var/lib/apc-ups-bridge/power-state.json` | Persisted power cycle, shutdown/wake attempts |
 | `/var/lib/apc-ups-bridge/email.json` | SMTP configuration and credential |
 | `/var/lib/apc-ups-bridge/email-state.json` | Persistent email incident, interruptions, report-delivery state |
+| `/var/lib/apc-ups-bridge/history/samples-YYYY-MM-DD.jsonl` | 15-minute voltage and load samples, kept 30 days |
 | `/var/log/apc-ups-bridge/events-YYYY-MM.jsonl` | Significant event history |
 
 Configuration and state updates use restricted files and atomic writes. A pending email incident pauses event-log retention cleanup. The installed service uses a dedicated `apc-ups-bridge` system account with `/usr/sbin/nologin`, systemd sandboxing and restricted writable paths. `apcupsd` remains a separate service responsible for the USB device and native local-host shutdown.

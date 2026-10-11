@@ -9,7 +9,8 @@ APC UPS Bridge runs on a Raspberry Pi or other Linux host and reads a single APC
 ## What it does
 
 - **Dashboard:** live mains/battery state, charge, remaining runtime, load, voltages, UPS identification and communication health, when reported by the device.
-- **Events and reports:** event-only monthly JSONL logs, filtered history, observed outage durations, CSV export and configurable retention. Routine poll samples are not stored.
+- **Events and reports:** event-only monthly JSONL logs, filtered history, observed outage durations, CSV export and configurable retention. Routine poll samples are not stored in event logs.
+- **History graphs:** input/output voltage and UPS load sampled every 15 minutes and kept for 30 days, with power events marked (see [Voltage and UPS load history](#voltage-and-ups-load-history)).
 - **Power rules and devices:** up to 16 approved remote Linux hosts; independent remote shutdown threshold (20% battery by default), order/priority, optional Wake-on-LAN recovery, and a connection-only **Test SSH** button for saved devices (checks public-key login, not shutdown permission). The Pi's own shutdown remains under `apcupsd`, with its configured thresholds displayed separately. Actions are persisted across bridge restarts and power cycles.
 - **Email notifications:** configure a TLS/STARTTLS SMTP account; one-shot outage/restoration alerts and a durable final report after mains returns, the UPS reports 100% charge, and optionally monitored devices are SSH-reachable. Reports persist across bridge restarts.
 - **Firmware information and advisory:** always display reported firmware (or **Unknown**) and the separate update-check status; warn only for recognized model/UPS-ID combinations whose installed firmware is below a dated local Schneider reference. No firmware is flashed.
@@ -69,6 +70,10 @@ sudo apc-ups-bridge-uninstall
 ```
 
 Add `--purge` to also delete the Bridge configuration, credentials, durable state, logs and dedicated account. Uninstalling the Bridge does **not** uninstall or reconfigure `apcupsd`.
+
+## Voltage and UPS load history
+
+The password-protected **History graphs** tab records one input/output voltage and UPS-load percentage sample per 15 minutes for up to 30 days, with a default 14-day view. This is a separate bounded sample log, not continuous event-log recording. Power events annotate their actual timestamps; gaps while the host is off or the UPS unavailable remain blank rather than inferred. Existing event-only logs cannot reconstruct voltage or load samples recorded before this feature. See [graphing details](docs/HISTORY.md).
 
 ## Developer build
 

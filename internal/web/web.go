@@ -22,6 +22,7 @@ import (
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/config"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/events"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/firmware"
+	"github.com/fructus-sum/APC-UPS-Bridge/internal/history"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/hostsettings"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/monitor"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/notify"
@@ -38,6 +39,7 @@ type Handler struct {
 	Logs    string
 	Power   *power.Controller
 	Mail    *notify.Engine
+	History *history.Store
 }
 type viewData struct {
 	Page    string
@@ -79,11 +81,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	if h.historyRoutes(w, r) {
+		return
+	}
 	if h.emailRoutes(w, r, csrf) {
 		return
 	}
 	switch r.URL.Path {
-	case "/", "/events", "/settings", "/power":
+	case "/", "/events", "/settings", "/power", "/history":
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", 405)
 			return

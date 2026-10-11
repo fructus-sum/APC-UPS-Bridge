@@ -22,6 +22,7 @@ import (
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/auth"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/config"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/events"
+	"github.com/fructus-sum/APC-UPS-Bridge/internal/history"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/monitor"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/notify"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/power"
@@ -37,6 +38,7 @@ func run() int {
 	interval := flag.Duration("interval", 10*time.Second, "initial UPS poll interval, overridden by saved web settings")
 	timeout := flag.Duration("timeout", 4*time.Second, "apcaccess command timeout")
 	logDir := flag.String("log-dir", "/var/log/apc-ups-bridge", "directory for monthly event-only logs")
+	historyDir := flag.String("history-dir", "/var/lib/apc-ups-bridge/history", "daily voltage/load samples retained for 30 days")
 	retention := flag.Int("retention-days", 365, "initial retention days, 0=forever; overridden by saved settings")
 	low := flag.Float64("low-battery", 20, "initial low battery warning percentage (no shutdown)")
 	once := flag.Bool("once", false, "single hardware poll printed as JSON; requires no web password")
@@ -97,6 +99,10 @@ func run() int {
 		return 2
 	}
 	current := settings.Get()
+	historyStore := history.New(*historyDir)
+	if _, err := historyStore.Cleanup(time.Now()); err != nil {
+		logger.Printf("history cleanup: %v", err)
+	}
 	reader := apc.CommandReader{Path: *command, Timeout: *timeout}
 	mon, err := monitor.New(reader, events.FileWriter{Dir: *logDir}, current.LowBatteryPercent)
 	if err != nil {
@@ -164,6 +170,7 @@ func run() int {
 	handler, err := web.New(mon, admin, settings, *logDir, powerController)
 	if err == nil {
 		web.AttachEmail(handler, mailEngine)
+		web.AttachHistory(handler, historyStore)
 	}
 	if err != nil {
 		logger.Print(err)
@@ -195,6 +202,7 @@ func run() int {
 	go mailEngine.Run(ctx, emailUpdates, func(err error) { logger.Printf("email report state: %v", err) })
 	lastPollError := false
 	lastPowerError := false
+	lastHistoryError := false
 	poll := func() {
 		err := mon.Poll(ctx)
 		if ctx.Err() != nil {
@@ -209,6 +217,13 @@ func run() int {
 		}
 		lastPollError = err != nil
 		status := mon.Snapshot()
+		if err == nil && status.Healthy && status.Current != nil {
+			sampleErr := historyStore.Record(status.Current)
+			if sampleErr != nil && !lastHistoryError {
+				logger.Printf("history sample error (repeats suppressed): %v", sampleErr)
+			}
+			lastHistoryError = sampleErr != nil
+		}
 		automationErr := powerController.Observe(ctx, status)
 		if automationErr != nil && ctx.Err() == nil && !lastPowerError {
 			logger.Printf("power automation error (repeats suppressed): %v", automationErr)
@@ -253,6 +268,9 @@ func run() int {
 			current = next
 			logger.Print("monitoring settings applied")
 		case <-cleanupTick.C:
+			if _, e := historyStore.Cleanup(time.Now()); e != nil {
+				logger.Printf("history cleanup: %v", e)
+			}
 			clean(current.RetentionDays)
 		}
 	}
