@@ -94,6 +94,7 @@ function startHostSettings(){
  const form=el('host-settings-form'),mode=el('host-setting-mode'),inputs=el('host-setting-inputs');
  if(!form)return;
  getJSON('/api/power/host-thresholds').then(v=>{
+  mode.value=v.managed?'managed':'existing';inputs.hidden=!v.managed;
   if(typeof v.battery_percent==='number' && v.battery_percent>=5 && v.battery_percent<=95)el('host-setting-battery').value=v.battery_percent;
   if(typeof v.runtime_minutes==='number' && v.runtime_minutes>=0 && v.runtime_minutes<=120)el('host-setting-minutes').value=v.runtime_minutes;
  }).catch(()=>{});
