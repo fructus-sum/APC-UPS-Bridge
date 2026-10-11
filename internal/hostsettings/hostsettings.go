@@ -23,6 +23,7 @@ type Settings struct {
  Managed bool `json:"managed"`
  BatteryPercent int `json:"battery_percent"`
  RuntimeMinutes int `json:"runtime_minutes"`
+ TimeoutMinutes int `json:"timeout_minutes"`
 }
 type Result struct {
  Applied bool `json:"applied"`
@@ -33,6 +34,7 @@ func (s Settings) Validate() error {
  if !s.Managed{return nil}
  if s.BatteryPercent < 5 || s.BatteryPercent > 95 { return fmt.Errorf("battery shutdown threshold must be between 5 and 95 percent") }
  if s.RuntimeMinutes < 0 || s.RuntimeMinutes > 120 { return fmt.Errorf("runtime shutdown threshold must be between 0 and 120 minutes") }
+ if s.TimeoutMinutes < 0 || s.TimeoutMinutes > 120 { return fmt.Errorf("on-battery timer must be between 0 and 120 minutes") }
  return nil
 }
 func Apply(s Settings) Result {
@@ -75,7 +77,7 @@ func onlineStatus(output []byte)error{
  return errors.New("UPS status missing; settings unchanged")
 }
 func replaceThresholds(data []byte,s Settings)[]byte{
- values:=map[string]string{"BATTERYLEVEL":strconv.Itoa(s.BatteryPercent),"MINUTES":strconv.Itoa(s.RuntimeMinutes),"TIMEOUT":"0"}
+ values:=map[string]string{"BATTERYLEVEL":strconv.Itoa(s.BatteryPercent),"MINUTES":strconv.Itoa(s.RuntimeMinutes),"TIMEOUT":strconv.Itoa(s.TimeoutMinutes*60)}
  seen:=map[string]bool{}
  lines:=strings.Split(strings.TrimSuffix(string(data),"\n"),"\n")
  out:=make([]string,0,len(lines)+3)

@@ -12,10 +12,11 @@ import (
 
 func TestReplaceThresholds(t *testing.T) {
  input:=[]byte("# keep comment\nBATTERYLEVEL 5\nMINUTES 2\nTIMEOUT 120\nNETSERVER on\n")
- out:=string(replaceThresholds(input,Settings{Managed:true,BatteryPercent:12,RuntimeMinutes:4}))
- for _,expected:=range []string{"BATTERYLEVEL 12\n","MINUTES 4\n","TIMEOUT 0\n","NETSERVER on\n","# keep comment\n"}{
+ out:=string(replaceThresholds(input,Settings{Managed:true,BatteryPercent:12,RuntimeMinutes:4,TimeoutMinutes:10}))
+ for _,expected:=range []string{"BATTERYLEVEL 12\n","MINUTES 4\n","TIMEOUT 600\n","NETSERVER on\n","# keep comment\n"}{
   if !strings.Contains(out,expected){t.Fatalf("missing %q in %q",expected,out)}
  }
+ if off:=string(replaceThresholds(input,Settings{Managed:true,BatteryPercent:12,RuntimeMinutes:4}));!strings.Contains(off,"TIMEOUT 0\n"){t.Fatalf("timer not disabled in %q",off)}
  if strings.Count(out,"BATTERYLEVEL")!=1{t.Fatal("duplicate battery key")}
 }
 func TestApplyConfigBackupAndRollback(t *testing.T){
