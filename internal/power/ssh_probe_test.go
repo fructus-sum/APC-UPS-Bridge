@@ -22,6 +22,12 @@ func TestSSHProbeNeverRequestsRemoteCommand(t *testing.T) {
  for _,want:=range []string{"-N","-T","StrictHostKeyChecking=yes","BatchMode=yes","PreferredAuthentications=publickey","ClearAllForwardings=yes","192.168.10.5"} {
   if !strings.Contains(captured,want){t.Fatalf("missing %q: %s",want,captured)}
  }
+ for _,want:=range []string{"ControlMaster=no","ControlPath=none"} {
+  if !strings.Contains(captured,want){t.Fatalf("missing %q: %s",want,captured)}
+ }
+ if lines:=strings.Split(strings.TrimSpace(captured),"\n");lines[len(lines)-1]!="root@192.168.10.5"{
+  t.Fatalf("destination is not the final argument: %s",captured)
+ }
  if strings.Contains(captured,"shutdown")||strings.Contains(captured,"sh -c")||strings.Contains(captured,"sudo"){
   t.Fatalf("a remote command was requested: %s",captured)
  }

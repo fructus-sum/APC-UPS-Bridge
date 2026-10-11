@@ -232,8 +232,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				http.Error(w,"UPS is not confirmed ONLINE; shutdown settings cannot be changed",409);return
 			}
 		}
-		ctx,cancel:=context.WithTimeout(r.Context(),12*time.Second)
+		ctx,cancel:=context.WithTimeout(r.Context(),50*time.Second)
 		defer cancel()
+		_=http.NewResponseController(w).SetWriteDeadline(time.Now().Add(55*time.Second))
 		result,err:=applyHostSettings(ctx,v)
 		if err!=nil {http.Error(w,"Local apcupsd settings service unavailable: "+err.Error(),503);return}
 		if result.Error!="" {http.Error(w,result.Error,409);return}

@@ -3,11 +3,13 @@ package hostsettings
 import (
  "bufio"
  "bytes"
+ "context"
  "errors"
  "fmt"
  "os"
  "os/exec"
  "path/filepath"
+ "sort"
  "strconv"
  "strings"
  "syscall"
@@ -42,16 +44,26 @@ func Apply(s Settings) Result {
  }
  if os.Geteuid()!=0{return Result{Error:"The privileged configuration service is unavailable"}}
  if err:=verifyOnline();err!=nil{return Result{Error:err.Error()}}
- if err:=applyConfig(ConfigPath,s,func()error{return exec.Command("/usr/bin/systemctl","restart","apcupsd.service").Run()});err!=nil{return Result{Error:err.Error()}}
- if err:=os.WriteFile(ManagedMarker,[]byte("managed by APC UPS Bridge\\n"),0600);err!=nil{return Result{Error:"Thresholds applied, but the web-management marker could not be saved"}}
+ if err:=applyConfig(ConfigPath,s,restartApcupsd);err!=nil{return Result{Error:err.Error()}}
+ if err:=os.WriteFile(ManagedMarker,[]byte("managed by APC UPS Bridge\n"),0600);err!=nil{return Result{Applied:true,Message:"Pi shutdown thresholds applied, but the web-management marker could not be saved. Verify apcupsd status."}}
  return Result{Applied:true,Message:"Pi shutdown thresholds applied. Verify apcupsd status."}
+}
+func restartApcupsd()error{
+ ctx,cancel:=context.WithTimeout(context.Background(),20*time.Second)
+ defer cancel()
+ return exec.CommandContext(ctx,"/usr/bin/systemctl","restart","apcupsd.service").Run()
 }
 func verifyOnline()error{
  var output []byte;var err error
+ ctx,cancel:=context.WithTimeout(context.Background(),5*time.Second)
+ defer cancel()
  for _,path:=range []string{"/usr/sbin/apcaccess","/usr/bin/apcaccess"} {
-  if _,e:=os.Stat(path);e==nil{output,err=exec.Command(path,"status").Output();break}
+  if _,e:=os.Stat(path);e==nil{output,err=exec.CommandContext(ctx,path,"status").Output();break}
  }
  if err!=nil||len(output)==0{return errors.New("Cannot confirm live UPS status; settings unchanged")}
+ return onlineStatus(output)
+}
+func onlineStatus(output []byte)error{
  scan:=bufio.NewScanner(bytes.NewReader(output))
  for scan.Scan() {
   key,val,ok:=strings.Cut(scan.Text(),":")
@@ -88,13 +100,20 @@ func applyConfig(path string,s Settings,restart func()error)error{
  if bytes.Equal(original,newContent){return nil}
  backup:=path+".bridge-backup-"+time.Now().UTC().Format("20060102T150405.000000000")
  if err:=os.WriteFile(backup,original,0600);err!=nil{return errors.New("Cannot back up apcupsd configuration")}
+ pruneBackups(path,5)
  if err:=atomicReplace(path,newContent,fi);err!=nil{return errors.New("Cannot write apcupsd configuration")}
  if err:=restart();err!=nil{
-  _=atomicReplace(path,original,fi)
-  _=restart()
-  return errors.New("apcupsd restart failed; previous configuration restored where possible")
+  if atomicReplace(path,original,fi)!=nil||restart()!=nil{
+   return errors.New("apcupsd restart failed and could not be restarted with the previous configuration; apcupsd may be stopped, check the Pi now")
+  }
+  return errors.New("apcupsd restart failed; previous configuration restored and apcupsd restarted")
  }
  return nil
+}
+func pruneBackups(path string,keep int){
+ matches,err:=filepath.Glob(path+".bridge-backup-*");if err!=nil||len(matches)<=keep{return}
+ sort.Strings(matches)
+ for _,m:=range matches[:len(matches)-keep]{_=os.Remove(m)}
 }
 func atomicReplace(path string,data []byte,original os.FileInfo)error{
  f,err:=os.CreateTemp(filepath.Dir(path),".apc-bridge-*");if err!=nil{return err}

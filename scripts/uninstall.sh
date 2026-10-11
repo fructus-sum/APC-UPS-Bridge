@@ -43,5 +43,6 @@ main() {
   # script (or reads it from a pipe), so deleting it while running is safe.
   rm -f /usr/local/sbin/apc-ups-bridge-uninstall
   echo 'apcupsd, its configuration and its config backups were NOT modified.'
+  echo 'Pi shutdown thresholds applied from the web interface remain in /etc/apcupsd/apcupsd.conf.'
 }
 main "$@"

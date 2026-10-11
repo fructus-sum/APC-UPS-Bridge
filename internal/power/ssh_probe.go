@@ -32,6 +32,8 @@ func (e LinuxExecutor) TestSSH(ctx context.Context, d Device) SSHProbeResult {
 	defer cancel()
 	args := []string{
 		"-N", "-T",
+		"-o", "ControlMaster=no",
+		"-o", "ControlPath=none",
 		"-o", "BatchMode=yes",
 		"-o", "PreferredAuthentications=publickey",
 		"-o", "PasswordAuthentication=no",

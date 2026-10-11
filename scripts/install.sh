@@ -542,6 +542,17 @@ build_binary() {
   (cd "$SOURCE_DIR" && "${GO_ENV[@]}" "$GO_BIN" build -trimpath -buildvcs=false -o "$WORKDIR/apc-ups-bridge-host-helper" ./cmd/apc-ups-bridge-host-helper </dev/null) || die 'Host settings helper build failed'
 }
 
+# Install root-owned, narrowly scoped socket helper without granting root
+# permissions or extra capabilities to the web process.
+install_host_helper() {
+  install -d -m 0755 /usr/local/libexec &&
+    install -o root -g root -m 0755 "$WORKDIR/apc-ups-bridge-host-helper" /usr/local/libexec/apc-ups-bridge-host-helper &&
+    install -o root -g root -m 0644 "$SOURCE_DIR/packaging/systemd/apc-ups-bridge-host-settings.socket" "$UNIT_DIR/apc-ups-bridge-host-settings.socket" &&
+    install -o root -g root -m 0644 "$SOURCE_DIR/packaging/systemd/apc-ups-bridge-host-settings.service" "$UNIT_DIR/apc-ups-bridge-host-settings.service" &&
+    systemctl daemon-reload &&
+    systemctl enable --now apc-ups-bridge-host-settings.socket
+}
+
 main() {
   parse_args "$@"
   [[ "$(uname -s)" == Linux ]] || die 'Only Linux is supported'
@@ -604,14 +615,9 @@ main() {
       die 'Service failed; check journalctl -u apc-ups-bridge.service'
     fi
   fi
-  # Install root-owned, narrowly scoped socket helper without granting root
-  # permissions or extra capabilities to the web process.
-  install -d -m 0755 /usr/local/libexec
-  install -o root -g root -m 0755 "$WORKDIR/apc-ups-bridge-host-helper" /usr/local/libexec/apc-ups-bridge-host-helper
-  install -o root -g root -m 0644 "$SOURCE_DIR/packaging/systemd/apc-ups-bridge-host-settings.socket" "$UNIT_DIR/apc-ups-bridge-host-settings.socket"
-  install -o root -g root -m 0644 "$SOURCE_DIR/packaging/systemd/apc-ups-bridge-host-settings.service" "$UNIT_DIR/apc-ups-bridge-host-settings.service"
-  systemctl daemon-reload
-  systemctl enable --now apc-ups-bridge-host-settings.socket
+  if ! install_host_helper; then
+    info 'WARNING: The Pi shutdown-threshold helper could not be installed; the bridge is running, but Pi thresholds cannot be changed from the web interface. Re-run the installer to retry.'
+  fi
   if [[ -f "$SOURCE_DIR/scripts/uninstall.sh" ]]; then
     install -d -m 0755 "$(dirname "$UNINSTALL_BIN")"
     install -m 0755 "$SOURCE_DIR/scripts/uninstall.sh" "$UNINSTALL_BIN"

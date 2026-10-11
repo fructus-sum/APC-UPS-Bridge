@@ -55,11 +55,11 @@ func applyHostSettings(ctx context.Context,settings hostsettings.Settings)(hosts
  c,err:=(&net.Dialer{Timeout:3*time.Second}).DialContext(ctx,"unix",hostsettings.SocketPath)
  if err!=nil{return hostsettings.Result{},fmt.Errorf("check that the host settings socket is installed and enabled")}
  defer c.Close()
- deadline:=time.Now().Add(11*time.Second)
+ deadline:=time.Now().Add(50*time.Second)
  if d,ok:=ctx.Deadline();ok&&d.Before(deadline){deadline=d}
  _=c.SetDeadline(deadline)
  if err:=json.NewEncoder(c).Encode(settings);err!=nil{return hostsettings.Result{},fmt.Errorf("cannot send host settings")}
  var reply hostsettings.Result
- if err:=json.NewDecoder(c).Decode(&reply);err!=nil{return hostsettings.Result{},fmt.Errorf("no response from host settings service")}
+ if err:=json.NewDecoder(c).Decode(&reply);err!=nil{return hostsettings.Result{},fmt.Errorf("no response from host settings service; the change may or may not have been applied, refresh to check the current Pi thresholds")}
  return reply,nil
 }
