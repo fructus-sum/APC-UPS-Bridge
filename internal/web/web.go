@@ -3,6 +3,7 @@ package web
 
 import (
 	"crypto/subtle"
+	"context"
 	"embed"
 	"encoding/csv"
 	"encoding/json"
@@ -215,6 +216,24 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		respondJSON(w, h.PowerConfig())
+	case "/api/power/host-thresholds":
+		if r.Method != http.MethodGet { http.Error(w, "method not allowed", 405); return }
+		respondJSON(w, hostShutdownSettings())
+	case "/api/power/test-ssh":
+		if r.Method != http.MethodPost { http.Error(w, "method not allowed", 405); return }
+		if !csrfValid(r, csrf) { http.Error(w, "invalid CSRF token", 403); return }
+		r.Body = http.MaxBytesReader(w, r.Body, 1024)
+		var req struct { ID string `json:"id"` }
+		decoder := json.NewDecoder(r.Body)
+		decoder.DisallowUnknownFields()
+		if decoder.Decode(&req) != nil || decoder.Decode(&struct{}{}) != io.EOF || req.ID == "" {
+			http.Error(w, "invalid saved device ID", 400); return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+		result, found := h.testSavedSSH(ctx, req.ID)
+		if !found { http.Error(w, "saved device not found", 404); return }
+		respondJSON(w, result)
 	case "/api/power/state":
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", 405)
