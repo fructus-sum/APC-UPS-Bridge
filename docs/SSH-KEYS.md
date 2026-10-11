@@ -2,6 +2,8 @@
 
 The bridge shuts down remote hosts over SSH, logging in with a public key. This guide shows how to find the bridge's key, authorize it on a remote host, and test the result. The same public key and a ready-made `authorized_keys` line are shown on the **Power rules & devices** page under "SSH key for remote hosts".
 
+**Debian hosts:** `tools/` contains scripts that create a restricted shutdown-only account and enroll the key for you; see `tools/README.md`.
+
 ## Requirements
 
 - The remote host runs an SSH server with public-key authentication enabled.

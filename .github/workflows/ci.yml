@@ -22,4 +22,4 @@ jobs:
       - name: Vet
         run: go vet ./...
       - name: Installer checks
-        run: bash -n scripts/*.sh && bash scripts/test-install.sh
+        run: bash -n scripts/*.sh tools/*.sh && bash scripts/test-install.sh
