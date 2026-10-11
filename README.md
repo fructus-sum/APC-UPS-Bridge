@@ -22,15 +22,6 @@ See [power protection](docs/POWER-PROTECTION.md), [SSH key setup](docs/SSH-KEYS.
 
 **Requirements:** systemd-based Linux, supported APC USB UPS, network access to fetch the source and (if needed) Go, and standard Linux utilities. The installer supports apt, dnf and zypper for installing `apcupsd`; other systems may need that package installed manually. **The installer builds from source** and does not require a published release.
 
-This repository is currently private. Clone it with your authorized GitHub credentials and install from the checkout:
-
-```bash
-git clone https://github.com/fructus-sum/APC-UPS-Bridge.git
-cd APC-UPS-Bridge
-sudo bash scripts/install.sh
-```
-
-After the repository is public, the installer also supports:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/fructus-sum/APC-UPS-Bridge/main/scripts/install.sh | sudo bash
