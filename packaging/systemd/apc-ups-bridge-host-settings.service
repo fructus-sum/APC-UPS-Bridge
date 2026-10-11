@@ -1,0 +1,21 @@
+[Unit]
+Description=APC UPS Bridge local host settings helper
+Requires=apc-ups-bridge-host-settings.socket
+After=apcupsd.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/local/libexec/apc-ups-bridge-host-helper
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/etc/apcupsd
+CapabilityBoundingSet=CAP_CHOWN CAP_FOWNER CAP_DAC_OVERRIDE
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+UMask=0077
