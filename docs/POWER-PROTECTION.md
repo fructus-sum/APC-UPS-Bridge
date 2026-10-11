@@ -8,6 +8,10 @@ Use the authenticated **Power rules & devices** page. Up to 16 remote devices ma
 
 Prepare the SSH identity as the **`apc-ups-bridge` service user**, including a trustworthy `known_hosts` entry for each destination. The application uses `BatchMode=yes`, `StrictHostKeyChecking=yes` and fixed commands (`shutdown -h now`, optionally prefixed with `sudo -n`). It does not accept SSH passwords or arbitrary shell commands from the browser. A suitable `ssh` client must be installed on the bridge host.
 
+On the **Power rules & devices** page, save a host and select **Test SSH (no shutdown)**. The test attempts a key-based SSH login with strict host-key checking as the Bridge service user and checks whether the shutdown executable or a matching non-interactive sudo permission can be found. It **never runs shutdown**, and a positive result is not a guarantee that an eventual shutdown completes. Test the real command manually on disposable equipment before relying on automation.
+
+**Different thresholds:** the Pi/Bridge host itself is shut down by native `apcupsd` at the values configured in `/etc/apcupsd/apcupsd.conf` (battery %, minutes remaining, or an independent on-battery timer). The UI reads these settings separately. The installer’s optional `--host-protection` preset is 10% battery or 3 minutes, but existing apcupsd settings may differ. Remote hosts use the bridge's independent shutdown threshold, **20% UPS charge by default** or optional runtime/LOWBATT conditions. A low-battery *warning* in Settings is a third, event-only threshold, not a shutdown rule.
+
 Verify that the remote account can issue the shutdown command using narrowly scoped permissions before enabling power automation. If using WoL, confirm the target's firmware/network settings and broadcast reachability on your actual network. WoL delivery is not guaranteed.
 
 ## Shutdown behavior
