@@ -97,17 +97,17 @@ function startHostSettings(){
   if(typeof v.battery_percent==='number' && v.battery_percent>=5 && v.battery_percent<=95)el('host-setting-battery').value=v.battery_percent;
   if(typeof v.runtime_minutes==='number' && v.runtime_minutes>=0 && v.runtime_minutes<=120)el('host-setting-minutes').value=v.runtime_minutes;
  }).catch(()=>{});
- mode.addEventListener('change',()=>{inputs.hidden=mode.value!=='managed';el('host-settings-commands').hidden=true;});
+ mode.addEventListener('change',()=>{inputs.hidden=mode.value!=='managed';});
  form.addEventListener('submit',async event=>{
-  event.preventDefault();const feedback=el('host-settings-feedback'),code=el('host-settings-commands');
-  code.hidden=true;feedback.textContent='Validating…';
+  event.preventDefault();const feedback=el('host-settings-feedback');
+  feedback.textContent='Checking UPS and applying…';
   const settings={managed:mode.value==='managed',battery_percent:Number(el('host-setting-battery').value),runtime_minutes:Number(el('host-setting-minutes').value)};
+  if(settings.managed&&!window.confirm('Apply the Pi shutdown thresholds and restart apcupsd? This does not change remote machine shutdown rules.')){feedback.textContent='Not applied.';return;}
   try{
-   const response=await fetch('/api/power/host-settings/plan',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(settings)});
+   const response=await fetch('/api/power/host-settings',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(settings)});
    if(!response.ok)throw new Error((await response.text()).trim());
-   const plan=await response.json();feedback.textContent=plan.message;
-   if(plan.commands?.length){code.textContent=plan.commands.join('\n');code.hidden=false;}
-  }catch(e){feedback.textContent='Unable to prepare changes: '+e.message;}
+   const reply=await response.json();feedback.textContent=reply.message||'Settings updated.';
+  }catch(e){feedback.textContent='Unable to apply Pi settings: '+e.message;}
  });
 }
 async function refreshPowerState(){
