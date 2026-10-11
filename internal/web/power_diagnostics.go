@@ -20,7 +20,8 @@ const apcupsdConfigPath = "/etc/apcupsd/apcupsd.conf"
 // hostShutdownSettings reads the effective configured apcupsd thresholds.
 // Do not invent defaults when a setting or config file cannot be read.
 func hostShutdownSettings() map[string]any {
- result:=map[string]any{"source":apcupsdConfigPath,"available":false,"battery_percent":nil,"runtime_minutes":nil,"timeout_seconds":nil}
+ _,marked:=os.Stat(hostsettings.ManagedMarker)
+ result:=map[string]any{"managed":marked==nil,"source":apcupsdConfigPath,"available":false,"battery_percent":nil,"runtime_minutes":nil,"timeout_seconds":nil}
  f,err:=os.Open(apcupsdConfigPath);if err!=nil{return result};defer f.Close()
  result["available"]=true
  s:=bufio.NewScanner(f)
