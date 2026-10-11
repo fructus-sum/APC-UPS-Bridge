@@ -14,3 +14,5 @@
 .history-legend{display:flex;gap:20px;flex-wrap:wrap;color:#607787;font-size:.83rem;margin-bottom:8px}
 .legend-line{display:inline-block;width:19px;height:3px;vertical-align:middle;margin-right:6px;border-radius:2px}
 .input-line{background:#1978ad}.output-line{background:#20916a}.load-line{background:#b57922}
+
+.key-box{width:100%;font-family:ui-monospace,Consolas,monospace;font-size:.8rem}pre.cmd{white-space:pre-wrap;overflow-wrap:anywhere;background:#f0f4f6;padding:8px 10px;border-radius:6px;font-size:.8rem}
