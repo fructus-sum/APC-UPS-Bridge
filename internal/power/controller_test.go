@@ -28,6 +28,8 @@ type fakeExecutor struct {
 	// onShutdown, when set, runs inside every Shutdown call (no fake lock held)
 	// and can block to simulate slow SSH.
 	onShutdown func(Device)
+	// onReachable behaves like onShutdown for liveness checks.
+	onReachable func(Device)
 }
 
 func (f *fakeExecutor) Shutdown(_ context.Context, d Device) error {
@@ -55,9 +57,14 @@ func (f *fakeExecutor) Wake(_ context.Context, d Device) error {
 }
 func (f *fakeExecutor) Reachable(_ context.Context, d Device) bool {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.checks = append(f.checks, d.ID)
-	return f.up
+	up := f.up
+	hook := f.onReachable
+	f.mu.Unlock()
+	if hook != nil {
+		hook(d)
+	}
+	return up
 }
 
 type memoryWriter struct {
@@ -995,17 +1002,28 @@ func TestUnreachableHostIsConfirmedAndLeftAlone(t *testing.T) {
 	triggerShutdown(t, c, &now)
 	now = now.Add(shutdownVerifyDelay)
 	observe(t, c, sample(apc.OnBattery, 12))
-	if a := c.View().Actions["node-1"]; !a.ShutdownConfirmed {
-		t.Fatalf("host not confirmed down: %+v", a)
+	// One failed connection is not enough to trust.
+	if a := c.View().Actions["node-1"]; a.ShutdownConfirmed || a.UnreachableChecks != 1 {
+		t.Fatalf("confirmed on a single failed check: %+v", a)
 	}
-	if countEvents(w, "remote_shutdown_confirmed") != 1 {
-		t.Fatal("missing confirmed event")
+	now = now.Add(shutdownRetryDelay - time.Second)
+	observe(t, c, sample(apc.OnBattery, 12))
+	if len(f.checks) != 1 {
+		t.Fatal("second check made before the spacing elapsed")
+	}
+	now = now.Add(time.Second)
+	observe(t, c, sample(apc.OnBattery, 12))
+	if a := c.View().Actions["node-1"]; !a.ShutdownConfirmed {
+		t.Fatalf("host not confirmed down after two failed checks: %+v", a)
+	}
+	if countEvents(w, "remote_shutdown_confirmed") != 1 || len(f.shutdowns) != 1 {
+		t.Fatal("expected one confirmed event and no resend")
 	}
 	for i := 0; i < 5; i++ {
 		now = now.Add(10 * time.Minute)
 		observe(t, c, sample(apc.OnBattery, 12))
 	}
-	if len(f.checks) != 1 || len(f.shutdowns) != 1 {
+	if len(f.checks) != 2 || len(f.shutdowns) != 1 {
 		t.Fatalf("confirmed host contacted again: checks=%d shutdowns=%d", len(f.checks), len(f.shutdowns))
 	}
 	// A confirmed host is still woken after recovery.
@@ -1036,5 +1054,113 @@ func TestStillRunningHostGivesUpAfterMaxAttempts(t *testing.T) {
 	}
 	if a := c.View().Actions["node-1"]; !a.ShutdownGaveUp || a.ShutdownConfirmed {
 		t.Fatalf("unexpected action state %+v", a)
+	}
+}
+
+func TestReachableAgainResetsUnreachableCount(t *testing.T) {
+	store, path := configured(t)
+	w := &memoryWriter{}
+	f := &fakeExecutor{up: false}
+	now := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
+	c := makeController(t, store, path, w, f, &now)
+	triggerShutdown(t, c, &now)
+	now = now.Add(shutdownVerifyDelay)
+	observe(t, c, sample(apc.OnBattery, 12))
+	if c.View().Actions["node-1"].UnreachableChecks != 1 {
+		t.Fatal("first failed check not counted")
+	}
+	// The host answers again on the second check: the count starts over and the
+	// shutdown is sent again.
+	f.up = true
+	now = now.Add(shutdownRetryDelay)
+	observe(t, c, sample(apc.OnBattery, 12))
+	a := c.View().Actions["node-1"]
+	if a.UnreachableChecks != 0 || a.ShutdownConfirmed || len(f.shutdowns) != 2 {
+		t.Fatalf("unexpected state %+v shutdowns=%d", a, len(f.shutdowns))
+	}
+}
+
+func TestDisableDuringLivenessCheckStopsFollowUps(t *testing.T) {
+	store, path := configured(t)
+	w := &memoryWriter{}
+	f := &fakeExecutor{up: true}
+	now := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
+	c := makeController(t, store, path, w, f, &now)
+	triggerShutdown(t, c, &now)
+	now = now.Add(shutdownVerifyDelay)
+
+	inCall := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	releaseAll := func() { once.Do(func() { close(release) }) }
+	t.Cleanup(releaseAll)
+	f.onReachable = func(Device) {
+		close(inCall)
+		<-release
+	}
+	done := observeAsync(c, sample(apc.OnBattery, 12))
+	waitFor(t, inCall, "the liveness check to start")
+	cfg := store.Get()
+	cfg.Enabled = false
+	if err := c.UpdateConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	releaseAll()
+	if err := waitErr(t, done); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.shutdowns) != 1 {
+		t.Fatalf("shutdown resent after automation was disabled: %d calls", len(f.shutdowns))
+	}
+	if a := c.View().Actions["node-1"]; a.ShutdownAttempts != 1 {
+		t.Fatalf("new attempt recorded after automation was disabled: %+v", a)
+	}
+	if countEvents(w, "remote_shutdown_still_running") != 0 {
+		t.Fatal("result of the check was recorded after automation was disabled")
+	}
+}
+
+func TestCancelledShutdownIsNotRecordedAsFailure(t *testing.T) {
+	store, path := configured(t)
+	w := &memoryWriter{}
+	f := &fakeExecutor{failShutdown: true}
+	now := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
+	c := makeController(t, store, path, w, f, &now)
+	triggerShutdown(t, c, &now)
+	for i := 0; i < maxShutdownAttempts-2; i++ {
+		now = now.Add(shutdownRetryDelay)
+		observe(t, c, sample(apc.OnBattery, 12))
+	}
+	if a := c.View().Actions["node-1"]; a.ShutdownAttempts != maxShutdownAttempts-1 {
+		t.Fatalf("setup: attempts %d", a.ShutdownAttempts)
+	}
+	// The service is stopped while the final attempt is in flight.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f.onShutdown = func(Device) { cancel() }
+	now = now.Add(shutdownRetryDelay)
+	if err := c.Observe(ctx, sample(apc.OnBattery, 12)); err != nil {
+		t.Fatal(err)
+	}
+	f.onShutdown = nil
+	a := c.View().Actions["node-1"]
+	if a.ShutdownGaveUp || a.ShutdownAttempts != maxShutdownAttempts-1 || !a.NextShutdownRetry.IsZero() {
+		t.Fatalf("interrupted attempt was consumed: %+v", a)
+	}
+	if got := countEvents(w, "remote_shutdown_failed"); got != maxShutdownAttempts-1 {
+		t.Fatalf("failed events %d: interrupted command was recorded", got)
+	}
+	if countEvents(w, "remote_shutdown_gave_up") != 0 {
+		t.Fatal("gave up because of a cancellation")
+	}
+	// After a restart the refunded attempt is made promptly and counted normally.
+	c = makeController(t, store, path, w, f, &now)
+	if a := c.View().Actions["node-1"]; a.ShutdownAttempts != maxShutdownAttempts-1 {
+		t.Fatalf("refund not persisted: %+v", a)
+	}
+	observe(t, c, sample(apc.OnBattery, 12))
+	a = c.View().Actions["node-1"]
+	if a.ShutdownAttempts != maxShutdownAttempts || !a.ShutdownGaveUp {
+		t.Fatalf("final attempt not made after restart: %+v", a)
 	}
 }

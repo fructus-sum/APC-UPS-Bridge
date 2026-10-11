@@ -24,6 +24,9 @@ const (
 	// An accepted shutdown is trusted only once the host stops answering on its
 	// SSH port. The first check is made this long after the command was accepted.
 	shutdownVerifyDelay = 2 * time.Minute
+	// A host counts as down only after this many consecutive failed connection
+	// checks, shutdownRetryDelay apart, so one dropped connection is not enough.
+	requiredUnreachableChecks = 2
 	// If mains is stable but the battery charge is unknown or never reaches the
 	// recovery threshold, the cycle still completes after this long.
 	recoveryBatteryTimeout = time.Hour
@@ -45,6 +48,7 @@ type ActionState struct {
 	ShutdownAccepted  bool      `json:"shutdown_accepted"`
 	LastShutdownAt    time.Time `json:"last_shutdown_at,omitempty"`
 	ShutdownConfirmed bool      `json:"shutdown_confirmed,omitempty"`
+	UnreachableChecks int       `json:"unreachable_checks,omitempty"`
 	ShutdownGaveUp    bool      `json:"shutdown_gave_up,omitempty"`
 	WakeAttempted     bool      `json:"wake_attempted"`
 	WakeSent          bool      `json:"wake_sent"`
@@ -494,6 +498,20 @@ func (c *Controller) shutdownGroup(ctx context.Context, startedAt time.Time, gro
 		return false, err
 	}
 	for len(jobs) > 0 {
+		// Follow-up waves are planned under an earlier lock; re-check that the
+		// admin has not disabled automation or changed the device meanwhile.
+		err := c.locked(func() error {
+			cfg := c.store.Get()
+			if !cfg.Enabled || !c.cycleIs(startedAt) {
+				proceed = false
+				return nil
+			}
+			jobs = approvedJobs(cfg, jobs)
+			return nil
+		})
+		if err != nil || !proceed || len(jobs) == 0 {
+			return proceed, err
+		}
 		results := make([]shutdownResult, len(jobs))
 		runParallel(len(jobs), func(i int) {
 			if jobs[i].verify {
@@ -504,13 +522,16 @@ func (c *Controller) shutdownGroup(ctx context.Context, startedAt time.Time, gro
 		})
 		done := jobs
 		jobs = nil
-		err := c.locked(func() error {
-			if !c.cycleIs(startedAt) {
-				proceed = false // disarmed while commands were in flight
+		err = c.locked(func() error {
+			cfg := c.store.Get()
+			if !cfg.Enabled || !c.cycleIs(startedAt) {
+				// Disarmed while commands were in flight: drop the results and
+				// start nothing further, not even a resend.
+				proceed = false
 				return nil
 			}
 			var err error
-			jobs, err = c.recordShutdowns(ctx, done, results, emit)
+			jobs, err = c.recordShutdowns(ctx, cfg, done, results, emit)
 			return err
 		})
 		if err != nil || !proceed {
@@ -518,6 +539,17 @@ func (c *Controller) shutdownGroup(ctx context.Context, startedAt time.Time, gro
 		}
 	}
 	return true, nil
+}
+
+// approvedJobs keeps the jobs whose device is still approved for shutdown.
+func approvedJobs(cfg Config, jobs []shutdownJob) []shutdownJob {
+	var out []shutdownJob
+	for _, j := range jobs {
+		if stillApprovedShutdown(cfg, j.dev) {
+			out = append(out, j)
+		}
+	}
+	return out
 }
 
 // planShutdowns chooses the due shutdown commands and liveness checks for one
@@ -581,7 +613,15 @@ func (c *Controller) beginShutdown(d Device, events *[]pendingEvent, now time.Ti
 // recordShutdowns applies command and liveness results, persists them, and
 // returns follow-up shutdown commands (already persisted as intents) for hosts
 // that were accepted but are still running. Callers hold c.mu.
-func (c *Controller) recordShutdowns(ctx context.Context, jobs []shutdownJob, results []shutdownResult, emit emitFunc) ([]shutdownJob, error) {
+func (c *Controller) recordShutdowns(ctx context.Context, cfg Config, jobs []shutdownJob, results []shutdownResult, emit emitFunc) ([]shutdownJob, error) {
+	if ctx.Err() != nil {
+		// The service is stopping. Command outcomes and liveness checks made
+		// under a cancelled context say nothing about the hosts, so record
+		// none of them; give the interrupted commands their attempt back so
+		// they are retried promptly after a restart.
+		c.refundInterrupted(jobs)
+		return nil, nil
+	}
 	now := c.now().UTC()
 	var next []shutdownJob
 	var events []pendingEvent
@@ -592,15 +632,21 @@ func (c *Controller) recordShutdowns(ctx context.Context, jobs []shutdownJob, re
 		r := results[i]
 		switch {
 		case j.verify:
-			if ctx.Err() != nil {
-				continue // a cancelled check says nothing about the host
-			}
 			if !r.reachable {
-				a.ShutdownConfirmed = true
+				a.UnreachableChecks++
+				if a.UnreachableChecks >= requiredUnreachableChecks {
+					a.ShutdownConfirmed = true
+					events = append(events, pendingEvent{"remote_shutdown_confirmed", "warning", map[string]any{"device": id}})
+				} else {
+					// One failed connection may be a network blip on the bridge's
+					// side; look again before trusting it.
+					a.NextShutdownRetry = now.Add(shutdownRetryDelay)
+				}
 				c.state.Actions[id] = a
-				events = append(events, pendingEvent{"remote_shutdown_confirmed", "warning", map[string]any{"device": id}})
 				continue
 			}
+			a.UnreachableChecks = 0
+			c.state.Actions[id] = a
 			events = append(events, pendingEvent{"remote_shutdown_still_running", "warning", map[string]any{"device": id, "attempt": attempts, "max_attempts": maxShutdownAttempts}})
 			if attempts >= maxShutdownAttempts {
 				a.ShutdownGaveUp = true
@@ -608,10 +654,14 @@ func (c *Controller) recordShutdowns(ctx context.Context, jobs []shutdownJob, re
 				events = append(events, pendingEvent{"remote_shutdown_gave_up", "critical", map[string]any{"device": id, "attempts": attempts, "reason": "host still reachable"}})
 				continue
 			}
+			if !stillApprovedShutdown(cfg, j.dev) {
+				continue
+			}
 			next = append(next, c.beginShutdown(j.dev, &events, now))
 		case r.err == nil:
 			a.ShutdownAccepted = true
 			a.LastShutdownAt = now
+			a.UnreachableChecks = 0
 			c.state.Actions[id] = a
 			events = append(events, pendingEvent{"remote_shutdown_accepted", "warning", map[string]any{"device": id, "attempt": attempts}})
 		default:
@@ -630,6 +680,28 @@ func (c *Controller) recordShutdowns(ctx context.Context, jobs []shutdownJob, re
 		emit(e.typ, e.level, e.data)
 	}
 	return next, nil
+}
+
+// refundInterrupted gives back the attempt consumed by shutdown commands that
+// were cut short by cancellation. The refund is best-effort: if it cannot be
+// persisted the attempt stays consumed on disk, which is the safe direction.
+// Callers hold c.mu.
+func (c *Controller) refundInterrupted(jobs []shutdownJob) {
+	for _, j := range jobs {
+		if j.verify {
+			continue
+		}
+		a := c.state.Actions[j.dev.ID]
+		n := a.shutdownAttemptCount() - 1
+		if n < 0 {
+			n = 0
+		}
+		a.ShutdownAttempts = n
+		a.ShutdownAttempted = n > 0
+		a.NextShutdownRetry = time.Time{}
+		c.state.Actions[j.dev.ID] = a
+	}
+	_ = c.persist()
 }
 func stillApproved(cfg Config, original Device) bool {
 	for _, d := range cfg.Devices {
