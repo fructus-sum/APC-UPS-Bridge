@@ -1,6 +1,6 @@
 # Email alerts and recovery reports
 
-Status: development feature, not yet verified on a physical Raspberry Pi/UPS or with real email providers.
+This feature is implemented and covered by simulated tests. Delivery with individual SMTP providers and physical Pi/UPS interruption scenarios still requires verification on the target installation.
 
 ## Purpose
 
@@ -42,4 +42,4 @@ After restart, the first observed UPS reading is reconciled with saved incident 
 - DNS, SMTP and internet failures must not block UPS polling or SSH shutdown: email operates on a separate buffered worker with short timeouts.
 - Normal UPS samples are not logged. Unexpected failures of state-file persistence are reported to service logs and the pending report is preserved rather than silently discarded.
 - If the host is powered off for long periods, some outages may never be observed. Reports explicitly distinguish observed events from estimated durations.
-- This feature does not install or update UPS firmware and retains the existing firmware advisory unchanged.
+- Firmware checking is a separate, read-only dashboard feature; no firmware is installed or updated.
