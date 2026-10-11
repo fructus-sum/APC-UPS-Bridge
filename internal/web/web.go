@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fructus-sum/APC-UPS-Bridge/internal/apc"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/auth"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/config"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/events"
@@ -213,25 +214,27 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := h.Power.UpdateConfig(value); err != nil {
-			http.Error(w, err.Error(), 400)
-			return
-		}
-		respondJSON(w, h.PowerConfig())
-	case "/api/power/host-settings/plan":
+			http.Error(w, err.Error(), case "/api/power/host-settings":
 		if r.Method != http.MethodPost { http.Error(w,"method not allowed",405); return }
 		if !csrfValid(r,csrf) { http.Error(w,"invalid CSRF token",403); return }
 		r.Body=http.MaxBytesReader(w,r.Body,1024)
 		var v hostsettings.Settings
 		dec:=json.NewDecoder(r.Body);dec.DisallowUnknownFields()
 		if dec.Decode(&v)!=nil || dec.Decode(&struct{}{})!=io.EOF { http.Error(w,"invalid shutdown settings",400); return }
-		if !v.Managed { respondJSON(w,map[string]any{"message":"Keeping the existing apcupsd configuration. No changes are required.","commands":[]string{}}); return }
 		if err:=v.Validate();err!=nil{http.Error(w,err.Error(),400);return}
-		// Deliberately do not grant the web application privileges over apcupsd.
-		// Show the exact validated commands for a local administrator to apply.
-		respondJSON(w,map[string]any{"message":"Review and run these commands locally as an administrator. They do not run through the dashboard.","commands":[]string{
-			"sudo cp -p /etc/apcupsd/apcupsd.conf /etc/apcupsd/apcupsd.conf.backup-manual",
-			fmt.Sprintf("sudo sed -i -E 's/^[[:space:]]*BATTERYLEVEL[[:space:]]+.*/BATTERYLEVEL %d/; s/^[[:space:]]*MINUTES[[:space:]]+.*/MINUTES %d/; s/^[[:space:]]*TIMEOUT[[:space:]]+.*/TIMEOUT 0/' /etc/apcupsd/apcupsd.conf",v.BatteryPercent,v.RuntimeMinutes),
-			"sudo systemctl restart apcupsd.service",
+		if v.Managed {
+			ups:=h.Monitor.Snapshot()
+			if !ups.Healthy || ups.Current==nil || ups.Current.Power!=apc.Online {
+				http.Error(w,"UPS is not confirmed ONLINE; shutdown settings cannot be changed",409);return
+			}
+		}
+		ctx,cancel:=context.WithTimeout(r.Context(),12*time.Second)
+		defer cancel()
+		result,err:=applyHostSettings(ctx,v)
+		if err!=nil {http.Error(w,"Local apcupsd settings service unavailable: "+err.Error(),503);return}
+		if result.Error!="" {http.Error(w,result.Error,409);return}
+		respondJSON(w,result)
+	start apcupsd.service",
 			"apcaccess status",
 		}})
 	case "/api/power/host-thresholds":
