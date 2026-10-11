@@ -1,115 +1,64 @@
-# Architecture proposal — v1
+# Architecture
 
-Status: **proposal, not implemented**. This document records intended scope and design decisions for review.
+APC UPS Bridge is a single Go application for monitoring one USB APC UPS through `apcupsd` and coordinating optional network power protection. The web assets are embedded in the executable. No database, external web service, or third-party Go modules are required.
 
-## Product goal
-Turn an older USB-connected APC UPS into a LAN-accessible UPS status and protection gateway using a Raspberry Pi or another supported Linux host, without a database or cloud account.
+## Components
 
-## Supported v1 environment
-- Linux with systemd; initially target Raspberry Pi OS, Debian and Ubuntu (ARMv6/ARMv7, ARM64, x86-64).
-- One USB-connected APC UPS supported by apcupsd/apcaccess.
-- apcupsd keeps ownership of USB communication. No custom USB driver.
-- A private LAN is the intended deployment environment.
+| Source | Role |
+|---|---|
+| `cmd/apc-ups-bridge/` | CLI flags, process lifecycle, polling, server and worker orchestration |
+| `internal/apc/` | Executes and parses `apcaccess status` |
+| `internal/monitor/` | Periodic UPS readings, health classification, cached status and transition events |
+| `internal/events/` | Event-only JSONL files, retention, CSV/report reads |
+| `internal/auth/` | Administrator password hashes, sessions, login limits and CSRF |
+| `internal/config/` | Monitoring preferences and atomic file updates |
+| `internal/power/` | Protected-host rules, durable outage state, SSH shutdown and UDP Wake-on-LAN |
+| `internal/notify/` | SMTP configuration, durable outage incidents, email delivery and final reports |
+| `internal/firmware/` | Offline, conservative UPS firmware reference comparison |
+| `internal/web/` | Authenticated HTTP handlers, templates and embedded HTML/CSS/JS |
+| `scripts/` | Source-based installer, installer checks, uninstaller and release build helper |
+| `packaging/systemd/` | Reference systemd unit |
 
-## Design goals
-1. One self-contained Go executable using standard-library HTTP and embedded HTML/CSS/JS.
-2. No database, external web framework, cloud service or telemetry.
-3. No regular disk writes for normal UPS polls; significant events only.
-4. Works unattended without a browser session.
-5. Safe defaults, especially around shutdown and waking remote devices.
-6. The installation script builds the binary from source on the target with a temporary Go toolchain (no release binaries are published).
+## Runtime flow
 
-## Proposed source tree
-```text
-cmd/apc-ups-bridge/main.go
-internal/apc/             # Read and parse apcaccess data, unit tests and fixtures
-internal/monitor/         # Polling, cached snapshot, health
-internal/power/           # Explicit outage/recovery state machine, tests
-internal/remote/          # SSH and WoL actions with strict timeouts
-internal/events/          # Event-only JSON Lines, retention, report scans
-internal/config/          # Read/validate/atomic-write config
-internal/auth/            # Password setup, sessions, CSRF protection
-internal/web/             # HTTP routes, embedded static assets and templates
-web/                      # Small HTML, CSS and JS sources
-scripts/install.sh
-scripts/uninstall.sh
-packaging/systemd/
-docs/
-tests/fixtures/           # Example apcaccess outputs and state transitions
-```
+1. `apcupsd` communicates with the USB UPS. The bridge runs `apcaccess status` on a configurable 5–60-second interval (10 seconds by default).
+2. The monitor caches the current reading in memory, with an explicit unhealthy/unknown state for absent or contradictory data. Web requests read the cache, not the USB device.
+3. Significant transitions append event records; routine samples do not produce time-series data.
+4. If remote power automation is explicitly enabled, its controller evaluates each observation, persists action intent/state, and coordinates approved remote-host SSH shutdowns and WoL recovery.
+5. A separate email worker handles outage/restoration alerts and pending recovery summaries without holding up remote power actions or dashboard requests.
+6. One standard-library HTTP server serves administrator login, dashboard, history, power rules, email settings and monitoring settings. Firmware warnings are read-only.
 
-## Runtime design
-- Go process polls apcaccess (through apcupsd) on a configurable interval (5-60 seconds), defaults proposed at 10 seconds. External commands have timeouts.
-- Cache readings in memory; serve status to browser from cache. Never poll on each web request.
-- Serve login, dashboard, event reports and admin settings on one configurable HTTP port (proposed 8080).
-- Configure apcupsd NIS on 127.0.0.1:3551 when compatible with the existing setup. Don't unnecessarily expose NIS.
-- Prefer browser polling over WebSockets for v1.
-- Treat unsupported UPS metrics as unknown, not zero.
+The normal binary defaults to `127.0.0.1:8080`. The interactive installer defaults the **installed service** to `0.0.0.0:8080` for LAN access; that is plain HTTP, so the installation must be kept on a trusted network or protected by a VPN/TLS proxy. The `apcupsd` NIS listener can stay bound to `127.0.0.1` and should not be exposed publicly.
 
-## Protection state and event model
-- States: ONLINE, ON_BATTERY, SHUTDOWN_REQUIRED, WAITING_FOR_RECOVERY, RECOVERED; plus communication fault handling.
-- Store only the minimal state required to avoid repeated shutdown or wake actions after crashes/restarts.
-- Recover stale state by reconciling current UPS status with persisted state.
-- Never attempt wake-ups until mains power is confirmed stable and battery charge meets the configured threshold.
-- Configurable remote devices: name, address, MAC, enable/disable shutdown and wake, action thresholds/order, SSH user and port.
-- SSH: key-based authentication with known-host checking; no web-entered arbitrary shell command.
-- Use Go UDP for Wake-on-LAN; preserve broadcast/interface customization where necessary.
-- Local Linux host protection needs coordination with apcupsd's native shutdown behavior. Never enable competing shutdown mechanisms by default.
-- UPS on-battery, low-battery and communication-failure transitions require hardware tests before release.
+## Disk state
 
-## Storage
-```text
-/etc/apc-ups-bridge/config.json
-/etc/apc-ups-bridge/auth.json
-/var/lib/apc-ups-bridge/state.json
-/var/log/apc-ups-bridge/events-YYYY-MM.jsonl
-```
-- Each event contains UTC timestamp, type, level, device identifier, and event-specific fields.
-- Do not log regular UPS samples. No event = no new log file.
-- Monthly JSON Lines files are created on demand, with configurable retention (default proposal: 365 days; longer or unlimited allowed).
-- Optional maximum log budget; documented oldest-first retention and careful handling of current file.
-- Repeated communication failures are consolidated, and recovery logged once.
-- Use atomic state/config writes and permissions that protect password material.
+| Path on an installed system | Contents |
+|---|---|
+| `/etc/apc-ups-bridge/settings.json` | Polling interval, low-charge warning, retention |
+| `/etc/apc-ups-bridge/power.json` | Approved remote hosts and power rules |
+| `/etc/apc-ups-bridge/service.env` | Web bind address/port |
+| `/var/lib/apc-ups-bridge/auth.json` | Administrator password verifier |
+| `/var/lib/apc-ups-bridge/power-state.json` | Persisted power cycle, shutdown/wake attempts |
+| `/var/lib/apc-ups-bridge/email.json` | SMTP configuration and credential |
+| `/var/lib/apc-ups-bridge/email-state.json` | Persistent email incident, interruptions, report-delivery state |
+| `/var/log/apc-ups-bridge/events-YYYY-MM.jsonl` | Significant event history |
 
-## Authentication and security
-- First-run setup requires creation of an administrator password.
-- Store password hashes with a salted deliberately slow KDF, and session tokens securely; no plaintext passwords.
-- HttpOnly, SameSite cookies; session expiry; CSRF protection for changes; rate-limited login.
-- Unauthenticated API and configuration writes are disabled by default; optional status-only read access is a separate future decision.
-- On direct unencrypted HTTP, LAN traffic is not confidential. Recommend HTTPS behind an existing trusted proxy/VPN for untrusted networks.
-- Web process runs unprivileged; use narrow system permissions for optional local shutdown.
-- No port forwarding/internet exposure by default.
+Configuration and state updates use restricted files and atomic writes. A pending email incident pauses event-log retention cleanup. The installed service uses a dedicated `apc-ups-bridge` system account with `/usr/sbin/nologin`, systemd sandboxing and restricted writable paths. `apcupsd` remains a separate service responsible for the USB device and native local-host shutdown.
 
-## Installer and operations
-- Bash installer detects distro, CPU architecture, init system, apcupsd availability and existing configuration.
-- Build from the repository source with a temporary, checksum-verified Go toolchain; install minimal OS packages as needed.
-- Back up files before modifying apcupsd; never replace working config without clear approval.
-- Create a dedicated user, secure config/state/log directories, install systemd service, enable/start it.
-- Support re-runnable installations, updates, uninstall and config backups.
-- Test installation on multiple Linux variants; explicitly report unsupported systems.
+## Failure and recovery behavior
 
-## v1 web pages
-1. Dashboard — UPS connectivity, mains status, battery %, runtime, load and voltage if available, remote device status, last event.
-2. Events and Reports — power outage timeline, outage duration, action history, filters/export.
-3. Devices — add/edit/remove remote SSH/WoL devices and validate addresses.
-4. Power Rules — thresholds, delays, safe recovery, local shutdown enable with warnings.
-5. System — UPS polling, web port, event retention, password, service health, version.
+Remote shutdown is disabled by default, requires an observed healthy online state before arming, and is subject to explicit thresholds, verification and bounded retries. WoL is sent only for eligible hosts under recovery rules. Persisted state avoids resetting action budgets after a bridge restart. Details: [Power protection](POWER-PROTECTION.md).
 
-## Out of scope for v1
-- Multiple UPS units
-- NUT/native network UPS protocols
-- Full continuous historical charts
-- Email/push/cloud notifications
-- Multi-user account management
-- Automatic public internet access
-- Arbitrary remote command editor
+Email alerts use one-shot sends with an anti-flapping cooldown; final reports persist through repeat outages and bridge restarts. A report is eligible only after ONLINE mains and 100% reported UPS charge, with optional SSH reachability checks. SMTP failures must not block power actions. Details: [Email notifications](EMAIL-NOTIFICATIONS.md).
 
-## Acceptance tests (minimum)
-- ONLINE -> ON_BATTERY -> ONLINE short interruption without shutdown.
-- Low battery triggers exactly one eligible shutdown per device.
-- Mains returns before/after shutdown; only approved WoL actions run once.
-- Restart while on battery, during shutdown or recovery.
-- apcaccess fails, returns incomplete output, or UPS goes missing.
-- Logging/retention under low disk space and corrupt/truncated event lines.
-- Login/session/CSRF and unauthorized settings mutations.
-- Service starts on boot; installer repeat run and upgrade preserve configs.
+Firmware information comes from `apcaccess` and a dated built-in table. It does not check the internet for the latest version or perform firmware flashing. Details: [Firmware](FIRMWARE.md).
+
+## Operational limits
+
+- One locally attached `apcupsd` UPS, not a multi-UPS manager or a NUT server.
+- No continuous per-poll history, guaranteed outage timings while the bridge is powered off, or delivery acknowledgements from a remote operating system.
+- Remote shutdown success and SSH-port disappearance are limited signals, not proof every application shut down cleanly.
+- Direct HTTP offers no encryption of passwords or sessions.
+- Automated tests cover many state transitions; physical power-loss, different USB UPS models and target-host behavior still require hardware qualification.
+
+See [Installation](INSTALL.md) for the supported installer workflow and administration commands.

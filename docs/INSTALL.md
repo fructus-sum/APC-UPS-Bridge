@@ -1,6 +1,6 @@
 # Installation, upgrades and recovery
 
-> **Hardware caveat:** this is a development preview. The installer builds on and has been reasoned about for Raspberry Pi OS / Debian, but test it, and above all remote shutdown, on your own hardware before depending on it for live power protection.
+> **Hardware safety:** The software has automated tests, but installation, USB UPS communication and remote power actions must be tested on your own hardware before relying on them.
 
 APC UPS Bridge runs as one unprivileged Go process on a **systemd-based Linux host** with an **APC USB UPS supported by apcupsd**. The runtime needs no Go toolchain, web framework, database, Docker container, or cloud account. There are no GitHub releases: the installer builds the binary from source on the box.
 
@@ -25,7 +25,7 @@ Prefer to read it first? Download `scripts/install.sh`, skim it, and run `sudo b
 1. Asks the questions up front, before anything slow or invasive: web port (default **8080**) and a new administrator password (twice, at least 12 characters). Questions are read from the terminal (`/dev/tty`), which is why the piped one-liner can still prompt.
 2. Gets the source: the checkout it was run from, or a download of the `main` branch (`--branch NAME` for another).
 3. Finds a Go 1.22+ toolchain. If there is none, it downloads the current official Go for your CPU from go.dev / dl.google.com, verifying its SHA-256. The toolchain is temporary.
-4. Builds the binary (`CGO_ENABLED=0`, no third-party modules) in a scratch directory under `/var/tmp`. **A small Pi can take several minutes**, and a download plus build may need a few hundred MB of free disk. Everything in the scratch directory, including any downloaded Go, is deleted when the installer exits. Go is never left installed.
+4. Builds the binary (`CGO_ENABLED=0`, no third-party modules) in a scratch directory under `/var/tmp`. **Build time depends on CPU and storage speed**, and a download plus build may need a few hundred MB of free disk. Everything in the scratch directory, including any downloaded Go, is deleted when the installer exits. Go is never left installed.
 5. Installs `apcupsd` with apt, dnf or zypper if `apcaccess` is missing. On that fresh install it also configures apcupsd for a USB UPS (details below) and checks that `apcaccess status` answers.
 6. Creates the `apc-ups-bridge` service user, installs the binary to `/usr/local/bin`, writes the hardened systemd unit, enables it at boot and starts it.
 7. Installs the uninstaller as `/usr/local/sbin/apc-ups-bridge-uninstall`, then prints the URL(s), e.g. `Open http://192.168.1.20:8080/`.
@@ -92,11 +92,13 @@ systemctl status apcupsd.service
 apcaccess status
 ```
 
-The systemd service runs as a dedicated `apc-ups-bridge` account and is enabled at boot. The binary is at `/usr/local/bin/apc-ups-bridge`; system configuration at `/etc/apc-ups-bridge`; password and power state at `/var/lib/apc-ups-bridge`; and event-only JSONL logs at `/var/log/apc-ups-bridge`. Regular readings remain in RAM. The unit uses systemd sandboxing and write access only to these three directories. To change the bind address later, run the installer again with `--listen`.
+The systemd service runs as a dedicated `apc-ups-bridge` account and is enabled at boot. The binary is at `/usr/local/bin/apc-ups-bridge`; system configuration at `/etc/apc-ups-bridge`; password and power state at `/var/lib/apc-ups-bridge`; and event-only JSONL logs at `/var/log/apc-ups-bridge`. Regular readings remain in RAM. The installer also builds a small, separately sandboxed host-settings helper and enables `apc-ups-bridge-host-settings.socket`, accessible only to the unprivileged Bridge service user. This allows the authenticated **Settings** page to change local `apcupsd` shutdown thresholds (battery percentage, remaining runtime and an on-battery timer) without granting the web server root privileges. Changes are refused unless the helper verifies the UPS as ONLINE; each change backs up `apcupsd.conf` before updating it and restarts `apcupsd`. Selecting existing-configuration mode stops web management but does not restore previous threshold values. A failed helper or communication check leaves settings unchanged (or attempts rollback after a restart failure).
+
+The unit uses systemd sandboxing and write access only to these three directories. To change the bind address later, run the installer again with `--listen`.
 
 ### SSH for approved remote shutdowns
 
-Create a limited-purpose SSH identity **for the `apc-ups-bridge` service user** in `/var/lib/apc-ups-bridge/.ssh`, register the *public* key with each approved target and verify each target's host key into the service user's `known_hosts`. The service uses `StrictHostKeyChecking=yes`, batch mode and fixed shutdown commands; it cannot prompt for passwords. The dedicated service user may access the network but **is not root**, and systemd sandboxing does not provide it local shutdown privileges. The Power Rules switch is off until explicitly enabled in the web interface. Test shutdown on disposable equipment before enabling automatic protection.
+Create a limited-purpose SSH identity **for the `apc-ups-bridge` service user** in `/var/lib/apc-ups-bridge/.ssh`, register the *public* key with each approved target and verify each target's host key into the service user's `known_hosts`. The service uses `StrictHostKeyChecking=yes`, batch mode and fixed shutdown commands; it cannot prompt for passwords. The dedicated service user may access the network but **is not root**, and systemd sandboxing does not provide it local shutdown privileges. The Power Rules page shows the local Pi's configured apcupsd BATTERYLEVEL/MINUTES/TIMEOUT separately from remote power rules, and includes a **Test SSH (no shutdown)** action for each saved remote host. Testing SSH requests no remote session or command, does not establish sudo/shutdown permission, and cannot guarantee eventual shutdown success. The Power Rules switch is off until explicitly enabled in the web interface. Test shutdown on noncritical equipment before enabling automatic protection. See [Power protection](POWER-PROTECTION.md) for shutdown retries, confirmation, and recovery behavior.
 
 ## Updates and rollback
 
@@ -124,4 +126,4 @@ bash scripts/test-install.sh
 go build -o apc-ups-bridge ./cmd/apc-ups-bridge
 ```
 
-GitHub Actions runs the Go and installer tests on pull requests. The installer test suite is unprivileged and changes nothing on the host.
+GitHub Actions runs Go, race, vet and installer tests on pull requests. The installer test suite is unprivileged and changes nothing on the host. A successful CI build is not a substitute for verifying a USB UPS, systemd permissions and actual shutdown/wake behavior.

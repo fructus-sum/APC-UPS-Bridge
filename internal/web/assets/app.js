@@ -34,23 +34,37 @@ async function refreshDashboard(){
   el('upsname').textContent=r.name||'Not reported';el('model').textContent=r.model||'Not reported';
   el('power').textContent=current?.status||'Unavailable';el('output').textContent=numeric(r.output_volts,' V',1);
   el('checked').textContent=dateText(r.observed_at);el('communication').textContent=s.healthy?'Connected':'Failed · '+(s.error||'Unknown reason');
+  const noBat=typeof r.battery_percent!=='number',noRun=typeof r.runtime_minutes!=='number',miss=el('missing-metrics-notice');
+  if(miss){miss.hidden=!(s.healthy&&current&&(noBat||noRun));el('missing-metrics-text').textContent='This UPS does not report '+(noBat&&noRun?'battery charge or runtime':noBat?'battery charge':'runtime')+'. '+(noBat&&noRun?"Only the on-battery timer and the UPS's own low-battery signal can trigger the Pi shutdown.":'The '+(noBat?'charge':'runtime')+' limit cannot trigger the Pi shutdown; the other limits, the on-battery timer and the UPS\'s own low-battery signal still can.');}
   el('battery-note').textContent=s.healthy?'Live UPS reading':'Showing last known value · stale';
   el('battery-bar').style.width=typeof r.battery_percent==='number'?Math.min(100,Math.max(0,r.battery_percent))+'%':'0%';
   el('battery-bar').className='battery-fill'+(typeof r.battery_percent==='number'&&r.battery_percent<=20?' low':'');
  }catch(err){el('health').textContent='Unable to load status';el('health').className='state error';}
 }
 async function refreshFirmware(){
- const warning=el('firmware-warning');
- if(!warning)return;
+ const installed=el('firmware-installed'),status=el('firmware-status'),id=el('firmware-ups-id');
+ const detail=el('firmware-detail'),warning=el('firmware-warning');
+ if(!installed||!status||!id||!detail||!warning)return;
  try {
   const fw=await getJSON('/api/firmware');
+  // A raw installed revision can be reported even when update availability is unknown.
+  installed.textContent=fw.installed?.trim()||'Unknown (not reported by UPS)';
+  id.textContent=fw.ups_id||'Unknown';
+  const labels={outdated:'Update listed',current:'Matches local reference',not_upgradeable:'Not user-upgradeable',unknown:'Unknown',unavailable:'UPS unavailable'};
+  status.textContent=labels[fw.status]||'Unknown';
+  detail.textContent=fw.message||'Update availability cannot be verified.';
   warning.hidden=fw.status!=='outdated';
   if(fw.status==='outdated'){
    el('firmware-message').textContent=fw.message;
    el('firmware-versions').textContent='Installed: '+fw.installed+' · Latest referenced: UPS '+fw.latest+' · Reference reviewed: '+fw.reference_date;
-   // The update link is a fixed trusted Schneider Electric URL, not device data.
   }
- } catch(e) {warning.hidden=true;}
+ }catch(e){
+  installed.textContent='Unknown (unable to check)';
+  status.textContent='Unknown';
+  id.textContent='Unknown';
+  detail.textContent='Could not load firmware details from the UPS Bridge.';
+  warning.hidden=true;
+ }
 }
 async function refreshRecent(){try{makeTimeline(el('recent-events'),await getJSON('/api/events?limit=5&days=30'));}catch(e){el('recent-events').textContent='Event history unavailable';}}
 async function refreshEvents(){
@@ -76,6 +90,28 @@ async function startSettings(){
    if (!res.ok) throw new Error(await res.text());
    feedback.textContent='Settings saved and applied.';
   }catch(e){feedback.textContent='Could not save: '+e.message;}
+ });
+}
+function startHostSettings(){
+ const form=el('host-settings-form'),mode=el('host-setting-mode'),inputs=el('host-setting-inputs');
+ if(!form)return;
+ getJSON('/api/power/host-thresholds').then(v=>{
+  mode.value=v.managed?'managed':'existing';inputs.hidden=!v.managed;
+  if(typeof v.battery_percent==='number' && v.battery_percent>=5 && v.battery_percent<=95)el('host-setting-battery').value=v.battery_percent;
+  if(typeof v.runtime_minutes==='number' && v.runtime_minutes>=0 && v.runtime_minutes<=120)el('host-setting-minutes').value=v.runtime_minutes;
+  if(typeof v.timeout_seconds==='number' && (v.managed || v.timeout_seconds>0))el('host-setting-timeout').value=Math.min(120,Math.max(0,Math.round(v.timeout_seconds/60)));
+ }).catch(()=>{});
+ mode.addEventListener('change',()=>{inputs.hidden=mode.value!=='managed';});
+ form.addEventListener('submit',async event=>{
+  event.preventDefault();const feedback=el('host-settings-feedback');
+  feedback.textContent='Checking UPS and applying…';
+  const settings={managed:mode.value==='managed',battery_percent:Number(el('host-setting-battery').value),runtime_minutes:Number(el('host-setting-minutes').value),timeout_minutes:Number(el('host-setting-timeout').value)};
+  if(settings.managed&&!window.confirm('Apply the Pi shutdown thresholds ('+settings.battery_percent+'% charge, '+settings.runtime_minutes+' min runtime, '+(settings.timeout_minutes?settings.timeout_minutes+' min on battery':'on-battery timer off')+') and restart apcupsd? This does not change remote machine shutdown rules.')){feedback.textContent='Not applied.';return;}
+  try{
+   const response=await fetch('/api/power/host-settings',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(settings)});
+   if(!response.ok)throw new Error((await response.text()).trim());
+   const reply=await response.json();feedback.textContent=reply.message||'Settings updated.';
+  }catch(e){feedback.textContent='Unable to apply Pi settings: '+e.message;}
  });
 }
 async function refreshPowerState(){
@@ -104,12 +140,35 @@ function addDevice(data={}){
  const fields=document.createElement('div');fields.className='device-fields';section.append(fields);
  const spec=[['Device ID','id','text',data.id||'node-'+Math.random().toString(36).slice(2,8)],['Friendly name','name','text',data.name||''],['IP or hostname','host','text',data.host||''],['SSH user','ssh_user','text',data.ssh_user||'root'],['SSH port','ssh_port','number',data.ssh_port??22],['Shutdown priority','priority','number',data.priority??0],['MAC address','mac','text',data.mac||''],['Wake destination IP','wake_address','text',data.wake_address||'255.255.255.255'],['Wake UDP port','wake_port','number',data.wake_port??9],['Use sudo -n','use_sudo','checkbox',data.use_sudo||false],['Allow automatic shutdown','shutdown_enabled','checkbox',data.shutdown_enabled||false],['Allow wake after shutdown','wake_enabled','checkbox',data.wake_enabled||false]];
  for(const [label,key,type,val] of spec)powerField(fields,label,key,val,type);
+ const test=document.createElement('button');test.type='button';test.className='secondary';test.textContent='Test SSH (no shutdown)';
+ const status=document.createElement('p');status.className='feedback';status.setAttribute('role','status');
+ test.addEventListener('click',async()=>{
+  const id=section.querySelector('[data-key="id"]').value;
+  test.disabled=true;status.textContent='Checking saved SSH connection…';
+  try{
+   const response=await fetch('/api/power/test-ssh',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({id})});
+   if(!response.ok)throw new Error((await response.text()).trim());
+   const result=await response.json();status.textContent=(result.status==='ready'?'✓ ':result.status==='warning'?'⚠ ':'✕ ')+result.message;
+  }catch(e){status.textContent='Test unavailable: '+e.message+' Save this device first, then retry.';}
+  finally{test.disabled=false;}
+ });section.append(test,status);
  root.append(section);
 }
 function collectDevices(){return Array.from(el('device-list').querySelectorAll('.device')).map(section=>{
  const d={};for(const input of section.querySelectorAll('[data-key]'))d[input.dataset.key]=input.type==='checkbox'?input.checked:input.type==='number'?Number(input.value):input.value.trim();return d;
 });}
+async function loadHostThresholds(){
+ try{
+  const r=await getJSON('/api/power/host-thresholds');
+  const n=(v,unit)=>typeof v==='number'?(v===0?'Disabled':'At '+v+unit):'Not configured / unknown';
+  el('host-shutdown-battery').textContent=n(r.battery_percent,'%');
+  el('host-shutdown-runtime').textContent=n(r.runtime_minutes,' minutes');
+  el('host-shutdown-timer').textContent=typeof r.timeout_seconds!=='number'?'Not configured / unknown':r.timeout_seconds===0?'Off':r.timeout_seconds%60===0?'After '+r.timeout_seconds/60+' minutes on battery':'After '+r.timeout_seconds+' seconds on battery';
+  if(!r.available)el('host-shutdown-note').textContent='Could not read apcupsd.conf from the Bridge service. Check the Pi configuration directly; remote rules below are separate.';
+ }catch(e){el('host-shutdown-note').textContent='Could not read Pi shutdown settings. Remote rules below are separate.';}
+}
 async function startPower(){
+ loadHostThresholds();
  const feedback=el('power-feedback');
  try{const v=await getJSON('/api/power');
  el('power-enabled').checked=v.enabled;el('shutdown-percent').value=v.shutdown_battery_percent;el('shutdown-runtime').value=v.shutdown_runtime_minutes;
@@ -129,6 +188,6 @@ async function startPower(){
 }
 if(page==='/'){refreshDashboard();refreshFirmware();refreshRecent();refreshPowerState();setInterval(refreshDashboard,10000);setInterval(refreshFirmware,60000);setInterval(refreshRecent,60000);setInterval(refreshPowerState,10000);}
 if(page==='/events'){refreshEvents();el('range').addEventListener('change',refreshEvents);el('refresh-events').addEventListener('click',refreshEvents);}
-if(page==='/settings') startSettings();
+if(page==='/settings'){startSettings();startHostSettings();}
 
 if(page==='/power')startPower();

@@ -22,6 +22,10 @@ main() {
 
   # Service: stop and disable if it exists; ignore "not found" and friends.
   systemctl disable --now apc-ups-bridge.service </dev/null >/dev/null 2>&1 || true
+  systemctl disable --now apc-ups-bridge-host-settings.socket </dev/null >/dev/null 2>&1 || true
+  systemctl stop apc-ups-bridge-host-settings.service </dev/null >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/apc-ups-bridge-host-settings.socket /etc/systemd/system/apc-ups-bridge-host-settings.service
+  rm -f /usr/local/libexec/apc-ups-bridge-host-helper
   rm -f /etc/systemd/system/apc-ups-bridge.service
   systemctl daemon-reload </dev/null || true
   systemctl reset-failed apc-ups-bridge.service </dev/null >/dev/null 2>&1 || true
@@ -39,5 +43,6 @@ main() {
   # script (or reads it from a pipe), so deleting it while running is safe.
   rm -f /usr/local/sbin/apc-ups-bridge-uninstall
   echo 'apcupsd, its configuration and its config backups were NOT modified.'
+  echo 'Pi shutdown thresholds applied from the web interface remain in /etc/apcupsd/apcupsd.conf.'
 }
 main "$@"
