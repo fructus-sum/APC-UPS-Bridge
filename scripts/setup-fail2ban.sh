@@ -78,7 +78,7 @@ finish() {
   exit "$status"
 }
 trap finish EXIT
-trap 'exit 1' INT TERM
+trap 'exit 1' HUP INT TERM
 for f in "${managed_files[@]}"; do
   if [[ -f "$f" ]]; then cp -p -- "$f" "$backup_dir/${f##*/}"; fi
 done

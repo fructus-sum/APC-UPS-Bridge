@@ -6,7 +6,7 @@ APC UPS Bridge runs as one unprivileged Go process on a **systemd-based Linux ho
 
 ## Install
 
-On Debian and Ubuntu, installing or upgrading also configures an APC UPS Bridge-specific Fail2ban jail for repeated failed web logins. Existing non-APC jails are preserved. After installation, visit **Login security** for read-only ban/unban history. Add `--skip-fail2ban` to skip this step. If automatic Fail2ban setup fails, the installer warns clearly and undoes its own changes so other Fail2ban jails keep working; check and retry as described in [Login security](LOGIN-SECURITY.md). On other Linux distributions, the application login throttle continues but Fail2ban needs manual setup.
+On Debian and Ubuntu, installing or upgrading also configures an APC UPS Bridge-specific Fail2ban jail for repeated failed web logins. Existing non-APC jails are preserved. After installation, visit **Login security** for read-only ban/unban history. Add `--skip-fail2ban` to skip this step; it does not remove a jail that an earlier install already set up. If automatic Fail2ban setup fails, the installer warns clearly and undoes its own changes so other Fail2ban jails keep working; check and retry as described in [Login security](LOGIN-SECURITY.md). On other Linux distributions, the application login throttle continues but Fail2ban needs manual setup.
 
 One command (works once the repository is public):
 
