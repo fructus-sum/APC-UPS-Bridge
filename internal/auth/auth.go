@@ -167,7 +167,9 @@ func (s *Store) Login(ip, username, password string) (token, csrf string, err er
 	if username != "admin" || !verify(s.password, password) {
 		a.count++
 		s.attempts[ip] = a
-		if a.count == 5 { return "", "", ErrSuspicious }
+		if a.count == 5 {
+			return "", "", ErrSuspicious
+		}
 		return "", "", ErrCredentials
 	}
 	delete(s.attempts, ip)

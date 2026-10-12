@@ -82,17 +82,17 @@ type Probe func(context.Context, Config) error
 type HostCheck func(context.Context, []Target) bool
 
 type Engine struct {
-	mu        sync.Mutex
-	store     *Store
-	path      string
-	logs      string
-	writer    events.Writer
-	sender    Sender
-	probe     Probe
-	hosts     HostCheck
-	now       func() time.Time
-	state     State
-	lastProbe time.Time
+	mu                sync.Mutex
+	store             *Store
+	path              string
+	logs              string
+	writer            events.Writer
+	sender            Sender
+	probe             Probe
+	hosts             HostCheck
+	now               func() time.Time
+	state             State
+	lastProbe         time.Time
 	lastSecurityAlert time.Time
 }
 
@@ -328,19 +328,25 @@ func (e *Engine) attempt(ctx context.Context, c Config, subject, body, id string
 		e.log("email_alert_sent", "info", map[string]any{"kind": subject})
 	}
 }
+
 // SendSecurityWarning is best-effort and globally rate-limited to limit abuse.
 func (e *Engine) SendSecurityWarning() {
- cfg := e.store.Get()
- if !cfg.Enabled { return }
- e.mu.Lock()
- if e.now().Sub(e.lastSecurityAlert) < time.Hour { e.mu.Unlock(); return }
- e.lastSecurityAlert = e.now()
- e.mu.Unlock()
- ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
- defer cancel()
- _ = e.sender.Send(ctx, cfg, "APC UPS Bridge — Security warning",
- "Multiple failed administrator logins suggest an attack. Check the read-only Login security page for local details. Source addresses are intentionally excluded from this email.\n",
- makeID(e.now())+"-security")
+	cfg := e.store.Get()
+	if !cfg.Enabled {
+		return
+	}
+	e.mu.Lock()
+	if e.now().Sub(e.lastSecurityAlert) < time.Hour {
+		e.mu.Unlock()
+		return
+	}
+	e.lastSecurityAlert = e.now()
+	e.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	_ = e.sender.Send(ctx, cfg, "APC UPS Bridge — Security warning",
+		"Multiple failed administrator logins suggest an attack. Check the read-only Login security page for local details. Source addresses are intentionally excluded from this email.\n",
+		makeID(e.now())+"-security")
 }
 
 func (e *Engine) summary(i *Incident, now time.Time) (string, string) {
