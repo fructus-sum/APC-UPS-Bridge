@@ -123,19 +123,13 @@ function summary(report){
  const interruptions=(report.events||[]).filter(e=>e.type==='power_lost'||e.type==='on_battery_detected').length;
  $('history-summary').textContent=`${measured} of ${points.length} fifteen-minute time slots measured · ${interruptions} observed power-loss events. Missing slots remain blank; recorded event measurements appear as individual points.`;
 }
-// Fetches a report; returns null after redirecting to the login page.
-async function fetchReport(url,label){
- const response=await fetch(url,{credentials:'same-origin',cache:'no-store'});
- if(response.status===401){location.assign('/login');return null;}
- if(!response.ok)throw new Error(`${label} request failed (${response.status})`);
- return response.json();
-}
+// Fetches a report; an expired session is sent to the login page by getJSON.
+const fetchReport=(url,label)=>getJSON(url,status=>`${label} request failed (${status})`);
 async function load(){
  const days=$('history-days').value;
  $('history-message').textContent='Loading retained readings…';
  try{
   const report=await fetchReport(`/api/history?days=${encodeURIComponent(days)}`,'History');
-  if(!report)return;
   draw($('voltage-chart'),report,[{key:'input_volts',color:'#1978ad'},{key:'output_volts',color:'#20916a'}],false);
   draw($('load-chart'),report,[{key:'load_percent',color:'#b57922'}],true);
   summary(report);
@@ -148,7 +142,6 @@ async function loadBattery() {
  message.textContent='Loading battery and event history…';
  try {
   const report=await fetchReport(`/api/history/battery?days=${encodeURIComponent(days)}`,'Battery history');
-  if(!report)return;
   drawBattery(report);
   message.textContent='30-day sampled readings plus recorded power events across the selected period. Older unmeasured periods remain blank.';
  }catch(err){message.textContent='Could not load battery history: '+err.message;}

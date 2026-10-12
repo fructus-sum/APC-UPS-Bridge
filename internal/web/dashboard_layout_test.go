@@ -34,7 +34,7 @@ func TestDashboardCollapsedSystemDetailsAndFirmwareLocation(t *testing.T) {
 		t.Fatal("missing remote device editor")
 	}
 	js := request(f.Handler, "GET", "/assets/app.js", "", f.Cookie, "")
-	for _, part := range []string{"device-details", "details.open=!data.id", "refreshDeviceStatus();setInterval(refreshDeviceStatus", "refreshFirmware();setInterval(refreshFirmware,60000)"} {
+	for _, part := range []string{"device-details", "details.open=!data.id", "refreshDeviceStatus();every(10000,refreshDeviceStatus", "refreshFirmware();every(60000,refreshFirmware)"} {
 		if !strings.Contains(js.Body.String(), part) {
 			t.Errorf("missing browser wiring: %s", part)
 		}
