@@ -55,7 +55,7 @@ function draw(root,report,series,percent){
   if(path)s.append(svg('path',{d:path,fill:'none',stroke:entry.color,'stroke-width':2,'stroke-linecap':'round','stroke-linejoin':'round'}));
  }
  root.append(s);
- if(!values.length){const p=document.createElement('p');p.className='history-empty';p.textContent='No stored measurements for this period. Recording begins after this version is installed.';root.append(p);}
+ if(!values.length){const p=document.createElement('p');p.className='history-empty';p.textContent='No stored measurements for this period. Measurements start when the bridge first runs.';root.append(p);}
 }
 // Third chart: battery charge, runtime (right axis), and observed mains status.
 // Never connect observations across unsampled buckets. Event-sourced battery

@@ -148,7 +148,7 @@ func (s *Store) Login(ip, username, password string) (token, csrf string, err er
 		a = attempt{since: now}
 	}
 	if a.count >= 6 {
-		return "", "", errors.New("too many attempts; retry in five minutes")
+		return "", "", errors.New("too many attempts; retry within ten minutes")
 	}
 	if username != "admin" || !verify(s.password, password) {
 		a.count++
