@@ -1,6 +1,6 @@
 # Voltage, load, battery and runtime history
 
-The authenticated **History graphs** tab plots UPS input voltage, output voltage, load percentage, battery charge, estimated runtime and observed mains power status across three separate graphs. The default view is **14 days**, selectable ranges are 24 hours, 7 days, 14 days and 30 days. All graph points use real UTC timestamps, displayed in your browser's local time zone.
+The authenticated **History graphs** tab plots UPS input voltage, output voltage, load percentage, battery charge, estimated runtime and observed mains power status across three separate graphs. Voltage and load retain their shared default of **14 days**, selectable as 24 hours, 7, 14 or 30 days. The **third battery/runtime graph alone** has its own selector: **30 days (default)**, **90 days (quarter)**, **180 days (six months)** and **365 days (one year)**. All graph points use real UTC timestamps, displayed in your browser's local time zone.
 
 ## Storage, coverage and retention
 
@@ -15,6 +15,8 @@ The authenticated **History graphs** tab plots UPS input voltage, output voltage
 The server returns a full 15-minute **time grid**, including explicit empty points. Old stored samples without the new battery/runtime fields are still supported. The SVG charts place samples by time on a true linear scale and break the line at every missing/unsupported reading. An off or rebooting Pi has no samples and thus shows a gap, not a synthetic voltage of 0 V or a straight connecting line. There is **no interpolation**.
 
 Available historical event logs are overlaid as timestamped **on-battery intervals**, where the start and restoration were actually observed. For the third chart, existing `power_lost`, `on_battery_detected`, `low_battery`, `power_restored` and new `battery_fully_charged` events backfill actual battery or runtime values **only where the event recorded that specific numeric value**. They are isolated dots, not synthetic continuous readings. The monitor now logs a `battery_fully_charged` event on an **observed** return to 100% after previously observing a lower charge. Restart or lost connectivity can make this transition unobservable. Events cannot reconstruct voltage, load or any readings between observed times. The 30-day graph history therefore starts accumulating when this version is installed; older graphs only backfill numeric battery or runtime readings explicitly present in recorded event details; other readings remain unknown.
+
+For the third graph, `GET /api/history/battery?days=365` returns only the **latest 30 days of measured 15-minute buckets**, alongside up to one year of retained, recorded battery and outage events (not an enormous one-year sample grid). Older event points appear at their exact timestamps with correctly scaled empty periods between them. Events older than the configured event-log retention cannot be recovered. Unrecorded historical battery values are never inferred. This endpoint is authenticated and accepts only 30, 90, 180 and 365 days.
 
 The graph API `GET /api/history?days=14` is available to authenticated users only, on the existing dashboard port. It reads at most 30 days of compact sample files and a bounded number of already retained UPS event records. Invalid ranges are rejected.
 
