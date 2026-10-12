@@ -307,7 +307,7 @@ func (s *Store) Read(days int, now time.Time, eventDir string) (Result, error) {
 				continue
 			}
 			switch ev.Type {
-			case "power_lost", "power_restored", "on_battery_detected", "ups_communication_lost", "ups_communication_restored", "low_battery":
+			case "power_lost", "power_restored", "on_battery_detected", "ups_communication_lost", "ups_communication_restored", "low_battery", "battery_fully_charged":
 				result.Events = append(result.Events, ev)
 				// Event measurements are genuine readings recorded at the transition.
 				// Backfill only otherwise missing battery/runtime fields in that
