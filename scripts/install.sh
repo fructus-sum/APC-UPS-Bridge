@@ -615,6 +615,14 @@ main() {
       die 'Service failed; check journalctl -u apc-ups-bridge.service'
     fi
   fi
+  # Configure the dedicated login jail on both new installs and upgrades.
+  if command -v apt-get >/dev/null 2>&1 && [[ -f "$SOURCE_DIR/scripts/setup-fail2ban.sh" ]]; then
+    if ! bash "$SOURCE_DIR/scripts/setup-fail2ban.sh" --port "${LISTEN##*:}" </dev/null; then
+      info 'WARNING: Fail2ban security setup FAILED. App rate limiting remains active; review setup-fail2ban.sh.'
+    fi
+  else
+    info 'WARNING: automatic Fail2ban setup is available on Debian-based systems only.'
+  fi
   if ! install_host_helper; then
     info 'WARNING: The Pi shutdown-threshold helper could not be installed; the bridge is running, but Pi thresholds cannot be changed from the web interface. Re-run the installer to retry.'
   fi
