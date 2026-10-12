@@ -9,6 +9,7 @@ APC UPS Bridge has two complementary defenses: application-level rate limiting, 
 - The first ban is **ten minutes**. Fail2ban's incremental-bantime policy doubles repeat bans, capped at **one day**, subject to the local Fail2ban database/history retention.
 - The application's separate in-memory throttle blocks new logins after six failures within ten minutes. It resets on a successful login or expiry; rebooting the service also clears this in-memory counter. Fail2ban history is separately managed by the OS.
 - When the application sees a fifth failed attempt within its ten-minute window, it attempts a **single warning email**, globally rate-limited to one per hour. The email contains no remote IP addresses, usernames or credentials. It uses the existing SMTP configuration, if enabled. Email is best-effort and cannot guarantee delivery while offline.
+- A reverse proxy or shared NAT can make multiple clients appear as one source IP. The application deliberately does not trust client-supplied forwarding headers; configure the deployment so Fail2ban cannot accidentally ban your only trusted proxy or management access path.
 - No global web lockout is enabled. Blocking an IP must not interfere with UPS polling, power protection, reporting or service restarts.
 - **Login security** in the web navigation shows only ban/unban history from this application's Fail2ban jail, not the general server journal. This history is **read-only**. IP addresses appear in this authenticated local view, but not emails.
 
