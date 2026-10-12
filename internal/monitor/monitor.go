@@ -70,6 +70,8 @@ func copyReading(s *apc.Snapshot) *apc.Snapshot {
 	v.LoadPercent = copyFloat(v.LoadPercent)
 	v.InputVolts = copyFloat(v.InputVolts)
 	v.OutputVolts = copyFloat(v.OutputVolts)
+	v.BatteryVolts = copyFloat(v.BatteryVolts)
+	v.NominalBatteryVolts = copyFloat(v.NominalBatteryVolts)
 	return &v
 }
 
