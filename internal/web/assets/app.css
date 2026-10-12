@@ -34,3 +34,5 @@
 .remote-status-item strong{overflow-wrap:anywhere}
 .remote-status-item .state{flex-shrink:0}
 @media(max-width:680px){.remote-status-item{align-items:flex-start;flex-wrap:wrap}.device{padding:12px}.device-summary{gap:8px}}
+
+.battery-health{border-top:1px solid #e4ebf0;margin-top:20px;padding-top:15px}.battery-health h3{margin:0 0 12px}.battery-health #battery-test-instructions{margin-top:12px}
