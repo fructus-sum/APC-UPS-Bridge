@@ -207,3 +207,52 @@ func atomicReplace(path string, data []byte, original os.FileInfo) error {
 	defer dir.Close()
 	return dir.Sync()
 }
+
+// Thresholds holds the apcupsd shutdown settings found in a configuration file.
+// A nil field means the file does not contain a usable value for that setting.
+type Thresholds struct {
+	BatteryPercent *int
+	RuntimeMinutes *int
+	TimeoutSeconds *int
+}
+
+// ReadThresholds parses BATTERYLEVEL, MINUTES and TIMEOUT from the apcupsd
+// configuration at path. No defaults are invented. If reading stops part-way,
+// the values found so far are returned together with the error.
+func ReadThresholds(path string) (Thresholds, error) {
+	var t Thresholds
+	f, err := os.Open(path)
+	if err != nil {
+		return t, err
+	}
+	defer f.Close()
+	s := bufio.NewScanner(f)
+	for s.Scan() {
+		line := strings.TrimSpace(s.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		parts := strings.Fields(line)
+		if len(parts) < 2 {
+			continue
+		}
+		key := strings.ToUpper(parts[0])
+		var target **int
+		switch key {
+		case "BATTERYLEVEL":
+			target = &t.BatteryPercent
+		case "MINUTES":
+			target = &t.RuntimeMinutes
+		case "TIMEOUT":
+			target = &t.TimeoutSeconds
+		default:
+			continue
+		}
+		n, e := strconv.Atoi(parts[1])
+		if e != nil || n < 0 {
+			continue
+		}
+		*target = &n
+	}
+	return t, s.Err()
+}
