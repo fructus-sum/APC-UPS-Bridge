@@ -60,10 +60,9 @@ port = $port
 protocol = tcp
 maxretry = 5
 findtime = 10m
-bantime = 10m
+bantime = 5m
 bantime.increment = true
 bantime.factor = 1
-bantime.maxtime = 1d
 action = %(action_)s
          apc-ups-bridge-event
 EOF
@@ -82,4 +81,4 @@ else
   systemctl enable --now fail2ban || die 'Could not enable/start Fail2ban'
 fi
 fail2ban-client status apc-ups-bridge || die 'APC UPS Bridge jail was not activated'
-say 'Five failed logins in ten minutes trigger an IP ban, starting at ten minutes and increasing up to one day.'
+say 'Five failed logins in ten minutes trigger an IP ban, starting at five minutes and doubling on repeat bans without a configured maximum.'
