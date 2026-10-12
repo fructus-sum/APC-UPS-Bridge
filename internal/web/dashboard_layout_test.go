@@ -19,6 +19,7 @@ func TestDashboardCollapsedSystemDetailsAndFirmwareLocation(t *testing.T) {
  for _,part:=range []string{`id="ups-model-heading"`,`id="model"`,`<details id="system-information"`,`System information`,`id="dashboard-remotes"`} {
   if !strings.Contains(body,part){t.Errorf("missing dashboard section: %s",part)}
  }
+ for _,part:=range []string{`id="health-battery-voltage"`,`id="health-test-result"`,`id="battery-test-guide"`,`id="battery-test-instructions" hidden`} {if !strings.Contains(body,part){t.Errorf("missing battery health: %s",part)}}
  if strings.Contains(body,`id="firmware-installed"`){t.Fatal("firmware still on dashboard")}
  settings:=request(h,"GET","/settings","",cookie,"")
  if !strings.Contains(settings.Body.String(),`id="firmware-installed"`){t.Fatal("firmware not moved to settings")}
