@@ -30,6 +30,9 @@ type Sample struct {
 	InputVolts  *float64  `json:"input_volts"`
 	OutputVolts *float64  `json:"output_volts"`
 	LoadPercent *float64  `json:"load_percent"`
+	BatteryPercent *float64 `json:"battery_percent,omitempty"`
+	RuntimeMinutes *float64 `json:"runtime_minutes,omitempty"`
+	Power apc.PowerState `json:"power,omitempty"`
 }
 
 type Bucket struct {
@@ -38,6 +41,11 @@ type Bucket struct {
 	OutputVolts *float64  `json:"output_volts"`
 	LoadPercent *float64  `json:"load_percent"`
 	Observed    bool      `json:"observed"`
+	BatteryPercent *float64 `json:"battery_percent,omitempty"`
+	RuntimeMinutes *float64 `json:"runtime_minutes,omitempty"`
+	Power apc.PowerState `json:"power,omitempty"`
+	BatteryFromEvent bool `json:"battery_from_event,omitempty"`
+	RuntimeFromEvent bool `json:"runtime_from_event,omitempty"`
 }
 
 type Result struct {
@@ -81,10 +89,10 @@ func (s *Store) Record(snap *apc.Snapshot) error {
 	if now.After(time.Now().UTC().Add(5 * time.Minute)) {
 		return fmt.Errorf("observation in future")
 	}
-	if !valid(snap.InputVolts, 0, 1000) || !valid(snap.OutputVolts, 0, 1000) || !valid(snap.LoadPercent, 0, 100) {
+	if !valid(snap.InputVolts, 0, 1000) || !valid(snap.OutputVolts, 0, 1000) || !valid(snap.LoadPercent, 0, 100) || !valid(snap.BatteryPercent, 0, 100) || !valid(snap.RuntimeMinutes, 0, 100000) {
 		return fmt.Errorf("invalid UPS sample")
 	}
-	if snap.InputVolts == nil && snap.OutputVolts == nil && snap.LoadPercent == nil {
+	if snap.InputVolts == nil && snap.OutputVolts == nil && snap.LoadPercent == nil && snap.BatteryPercent == nil && snap.RuntimeMinutes == nil {
 		return nil
 	}
 	bucket := now.Truncate(Interval)
@@ -104,7 +112,7 @@ func (s *Store) Record(snap *apc.Snapshot) error {
 		s.lastBucket = bucket
 		return nil
 	}
-	rec := Sample{Time: now, InputVolts: clone(snap.InputVolts), OutputVolts: clone(snap.OutputVolts), LoadPercent: clone(snap.LoadPercent)}
+	rec := Sample{Time: now, InputVolts: clone(snap.InputVolts), OutputVolts: clone(snap.OutputVolts), LoadPercent: clone(snap.LoadPercent), BatteryPercent: clone(snap.BatteryPercent), RuntimeMinutes: clone(snap.RuntimeMinutes), Power: snap.Power}
 	b, err := json.Marshal(rec)
 	if err != nil {
 		return err
@@ -263,7 +271,7 @@ func (s *Store) Read(days int, now time.Time, eventDir string) (Result, error) {
 	for _, name := range files {
 		err := eachLine(filepath.Join(s.Dir, name), func(b []byte) {
 			var v Sample
-			if json.Unmarshal(b, &v) != nil || v.Time.IsZero() || !valid(v.InputVolts, 0, 1000) || !valid(v.OutputVolts, 0, 1000) || !valid(v.LoadPercent, 0, 100) {
+			if json.Unmarshal(b, &v) != nil || v.Time.IsZero() || !valid(v.InputVolts, 0, 1000) || !valid(v.OutputVolts, 0, 1000) || !valid(v.LoadPercent, 0, 100) || !valid(v.BatteryPercent, 0, 100) || !valid(v.RuntimeMinutes, 0, 100000) {
 				return
 			}
 			slot := v.Time.UTC().Truncate(Interval)
@@ -278,6 +286,9 @@ func (s *Store) Read(days int, now time.Time, eventDir string) (Result, error) {
 			result.Points[idx].InputVolts = v.InputVolts
 			result.Points[idx].OutputVolts = v.OutputVolts
 			result.Points[idx].LoadPercent = v.LoadPercent
+			result.Points[idx].BatteryPercent = v.BatteryPercent
+			result.Points[idx].RuntimeMinutes = v.RuntimeMinutes
+			result.Points[idx].Power = v.Power
 			result.Points[idx].Observed = true
 			result.Samples++
 		})
@@ -296,10 +307,30 @@ func (s *Store) Read(days int, now time.Time, eventDir string) (Result, error) {
 				continue
 			}
 			switch ev.Type {
-			case "power_lost", "power_restored", "on_battery_detected", "ups_communication_lost", "ups_communication_restored":
+			case "power_lost", "power_restored", "on_battery_detected", "ups_communication_lost", "ups_communication_restored", "low_battery":
 				result.Events = append(result.Events, ev)
+				// Event measurements are genuine readings recorded at the transition.
+				// Backfill only otherwise missing battery/runtime fields in that
+				// quarter-hour slot; never interpolate missing readings or power state.
+				idx := int(ev.Time.UTC().Truncate(Interval).Sub(start) / Interval)
+				if idx >= 0 && idx < len(result.Points) {
+					bucket := &result.Points[idx]
+					if bucket.BatteryPercent == nil {
+						if n, ok := eventNumber(ev.Details, "battery_percent", 0, 100); ok { bucket.BatteryPercent = &n; bucket.BatteryFromEvent = true }
+					}
+					if bucket.RuntimeMinutes == nil {
+						if n, ok := eventNumber(ev.Details, "runtime_minutes", 0, 100000); ok { bucket.RuntimeMinutes = &n; bucket.RuntimeFromEvent = true }
+					}
+				}
 			}
 		}
 	}
 	return result, nil
+}
+
+// eventNumber accepts only a valid numeric measurement actually stored in an event.
+func eventNumber(details map[string]any, key string, min, max float64) (float64, bool) {
+ v,ok:=details[key]; if !ok {return 0,false}
+ n,ok:=v.(float64); if !ok || math.IsNaN(n) || math.IsInf(n,0) || n<min || n>max { return 0,false }
+ return n,true
 }
