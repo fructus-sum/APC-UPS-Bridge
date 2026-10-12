@@ -88,40 +88,60 @@ func TestPowerRoutesAuthorizedAndValidated(t *testing.T) {
 var _ apc.Reader = testReader{}
 
 func TestSSHPreflightRequiresAuthenticationAndCSRF(t *testing.T) {
- dir:=t.TempDir()
- authpath:=filepath.Join(dir,"auth.json")
- if err:=auth.Initialize(authpath,"long secret passphrase");err!=nil{t.Fatal(err)}
- admin,_:=auth.Open(authpath)
- mon,_:=monitor.New(testReader{},events.FileWriter{Dir:filepath.Join(dir,"logs")},20)
- prefs,_:=config.Open(filepath.Join(dir,"prefs.json"),config.Settings{PollIntervalSeconds:10,LowBatteryPercent:20,RetentionDays:365},nil)
- store,_:=power.OpenConfig(filepath.Join(dir,"power.json"))
- ctrl,_:=power.OpenController(store,filepath.Join(dir,"power-state.json"),events.FileWriter{Dir:filepath.Join(dir,"logs")},inertExec{})
- h,_:=New(mon,admin,prefs,filepath.Join(dir,"logs"),ctrl)
- payload:=`{"id":"missing"}`
- if w:=request(h,"POST","/api/power/test-ssh",payload,nil,"");w.Code!=401{t.Fatalf("unauthenticated: %d",w.Code)}
- token,csrf,_:=admin.Login("127.0.0.1","admin","long secret passphrase")
- cookie:=&http.Cookie{Name:"ups_bridge_session",Value:token}
- if w:=request(h,"POST","/api/power/test-ssh",payload,cookie,"");w.Code!=403{t.Fatalf("CSRF bypass: %d",w.Code)}
- if w:=request(h,"GET","/api/power/test-ssh","",cookie,csrf);w.Code!=405{t.Fatalf("GET test allowed: %d",w.Code)}
- if w:=request(h,"POST","/api/power/test-ssh",payload,cookie,csrf);w.Code!=404{t.Fatalf("unknown device allowed: %d",w.Code)}
- if w:=request(h,"GET","/api/power/host-thresholds","",cookie,"");w.Code!=200{t.Fatalf("native threshold view: %d",w.Code)}
+	dir := t.TempDir()
+	authpath := filepath.Join(dir, "auth.json")
+	if err := auth.Initialize(authpath, "long secret passphrase"); err != nil {
+		t.Fatal(err)
+	}
+	admin, _ := auth.Open(authpath)
+	mon, _ := monitor.New(testReader{}, events.FileWriter{Dir: filepath.Join(dir, "logs")}, 20)
+	prefs, _ := config.Open(filepath.Join(dir, "prefs.json"), config.Settings{PollIntervalSeconds: 10, LowBatteryPercent: 20, RetentionDays: 365}, nil)
+	store, _ := power.OpenConfig(filepath.Join(dir, "power.json"))
+	ctrl, _ := power.OpenController(store, filepath.Join(dir, "power-state.json"), events.FileWriter{Dir: filepath.Join(dir, "logs")}, inertExec{})
+	h, _ := New(mon, admin, prefs, filepath.Join(dir, "logs"), ctrl)
+	payload := `{"id":"missing"}`
+	if w := request(h, "POST", "/api/power/test-ssh", payload, nil, ""); w.Code != 401 {
+		t.Fatalf("unauthenticated: %d", w.Code)
+	}
+	token, csrf, _ := admin.Login("127.0.0.1", "admin", "long secret passphrase")
+	cookie := &http.Cookie{Name: "ups_bridge_session", Value: token}
+	if w := request(h, "POST", "/api/power/test-ssh", payload, cookie, ""); w.Code != 403 {
+		t.Fatalf("CSRF bypass: %d", w.Code)
+	}
+	if w := request(h, "GET", "/api/power/test-ssh", "", cookie, csrf); w.Code != 405 {
+		t.Fatalf("GET test allowed: %d", w.Code)
+	}
+	if w := request(h, "POST", "/api/power/test-ssh", payload, cookie, csrf); w.Code != 404 {
+		t.Fatalf("unknown device allowed: %d", w.Code)
+	}
+	if w := request(h, "GET", "/api/power/host-thresholds", "", cookie, ""); w.Code != 200 {
+		t.Fatalf("native threshold view: %d", w.Code)
+	}
 }
 
 func TestSSHKeyEndpoint(t *testing.T) {
- t.Setenv("HOME",t.TempDir())
- dir:=t.TempDir()
- authpath:=filepath.Join(dir,"auth.json")
- if err:=auth.Initialize(authpath,"long secret passphrase");err!=nil{t.Fatal(err)}
- admin,_:=auth.Open(authpath)
- mon,_:=monitor.New(testReader{},events.FileWriter{Dir:filepath.Join(dir,"logs")},20)
- prefs,_:=config.Open(filepath.Join(dir,"prefs.json"),config.Settings{PollIntervalSeconds:10,LowBatteryPercent:20,RetentionDays:365},nil)
- store,_:=power.OpenConfig(filepath.Join(dir,"power.json"))
- ctrl,_:=power.OpenController(store,filepath.Join(dir,"power-state.json"),events.FileWriter{Dir:filepath.Join(dir,"logs")},inertExec{})
- h,_:=New(mon,admin,prefs,filepath.Join(dir,"logs"),ctrl)
- if w:=request(h,"GET","/api/power/ssh-key","",nil,"");w.Code!=401{t.Fatalf("unauthenticated: %d",w.Code)}
- token,csrf,_:=admin.Login("127.0.0.1","admin","long secret passphrase")
- cookie:=&http.Cookie{Name:"ups_bridge_session",Value:token}
- if w:=request(h,"POST","/api/power/ssh-key","{}",cookie,csrf);w.Code!=405{t.Fatalf("POST allowed: %d",w.Code)}
- w:=request(h,"GET","/api/power/ssh-key","",cookie,"")
- if w.Code!=200||!strings.Contains(w.Body.String(),`"keys":[]`){t.Fatalf("key list: %d %s",w.Code,w.Body.String())}
+	t.Setenv("HOME", t.TempDir())
+	dir := t.TempDir()
+	authpath := filepath.Join(dir, "auth.json")
+	if err := auth.Initialize(authpath, "long secret passphrase"); err != nil {
+		t.Fatal(err)
+	}
+	admin, _ := auth.Open(authpath)
+	mon, _ := monitor.New(testReader{}, events.FileWriter{Dir: filepath.Join(dir, "logs")}, 20)
+	prefs, _ := config.Open(filepath.Join(dir, "prefs.json"), config.Settings{PollIntervalSeconds: 10, LowBatteryPercent: 20, RetentionDays: 365}, nil)
+	store, _ := power.OpenConfig(filepath.Join(dir, "power.json"))
+	ctrl, _ := power.OpenController(store, filepath.Join(dir, "power-state.json"), events.FileWriter{Dir: filepath.Join(dir, "logs")}, inertExec{})
+	h, _ := New(mon, admin, prefs, filepath.Join(dir, "logs"), ctrl)
+	if w := request(h, "GET", "/api/power/ssh-key", "", nil, ""); w.Code != 401 {
+		t.Fatalf("unauthenticated: %d", w.Code)
+	}
+	token, csrf, _ := admin.Login("127.0.0.1", "admin", "long secret passphrase")
+	cookie := &http.Cookie{Name: "ups_bridge_session", Value: token}
+	if w := request(h, "POST", "/api/power/ssh-key", "{}", cookie, csrf); w.Code != 405 {
+		t.Fatalf("POST allowed: %d", w.Code)
+	}
+	w := request(h, "GET", "/api/power/ssh-key", "", cookie, "")
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"keys":[]`) {
+		t.Fatalf("key list: %d %s", w.Code, w.Body.String())
+	}
 }

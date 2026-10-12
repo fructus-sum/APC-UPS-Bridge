@@ -87,6 +87,8 @@ func TestLongLine(t *testing.T) {
 }
 
 func TestParseFirmwareMetadata(t *testing.T) {
- s,err:=Parse([]byte("STATUS: ONLINE\nMODEL: SMT1500C\nSKU: SMT1500C\nFIRMWARE: UPS 17.2 / ID=1027\n"),time.Now())
- if err!=nil||s.Firmware!="UPS 17.2 / ID=1027"||s.SKU!="SMT1500C" {t.Fatalf("%+v, %v",s,err)}
+	s, err := Parse([]byte("STATUS: ONLINE\nMODEL: SMT1500C\nSKU: SMT1500C\nFIRMWARE: UPS 17.2 / ID=1027\n"), time.Now())
+	if err != nil || s.Firmware != "UPS 17.2 / ID=1027" || s.SKU != "SMT1500C" {
+		t.Fatalf("%+v, %v", s, err)
+	}
 }

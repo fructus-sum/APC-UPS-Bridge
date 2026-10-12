@@ -19,38 +19,38 @@ const ReferenceDate = "2026-10-10"
 const GuidanceURL = "https://www.se.com/us/en/faqs/FA279197/"
 
 var latest = map[string]string{
-	"SMC/1000": "10.0",
-	"SMC/1005": "15.1",
-	"SMC/1007": "15.0",
-	"SMC/1018": "18.2",
-	"SMC/1028": "18.2",
-	"SMT/17":   "07.1",
-	"SMT/18":   "15.1",
-	"SMT/1015": "18.0",
-	"SMT/1027": "18.0",
-	"SMT/1031": "15.6",
-	"SMT/1039": "15.5",
-	"SMT/1040": "15.0",
-	"SMT/1041": "15.0",
-	"SMT/1050": "16.6",
-	"SMT/1059": "16.5",
-	"SMX/1003": "15.0",
-	"SMX/1031": "15.6",
-	"SMX/1050": "16.6",
-	"SMX/20":   "15.0",
-	"SMX/23":   "15.0",
-	"SCL/1029": "15.6",
-	"SCL/1030": "15.6",
-	"SCL/1036": "15.6",
-	"SCL/1037": "15.6",
+	"SMC/1000":  "10.0",
+	"SMC/1005":  "15.1",
+	"SMC/1007":  "15.0",
+	"SMC/1018":  "18.2",
+	"SMC/1028":  "18.2",
+	"SMT/17":    "07.1",
+	"SMT/18":    "15.1",
+	"SMT/1015":  "18.0",
+	"SMT/1027":  "18.0",
+	"SMT/1031":  "15.6",
+	"SMT/1039":  "15.5",
+	"SMT/1040":  "15.0",
+	"SMT/1041":  "15.0",
+	"SMT/1050":  "16.6",
+	"SMT/1059":  "16.5",
+	"SMX/1003":  "15.0",
+	"SMX/1031":  "15.6",
+	"SMX/1050":  "16.6",
+	"SMX/20":    "15.0",
+	"SMX/23":    "15.0",
+	"SCL/1029":  "15.6",
+	"SCL/1030":  "15.6",
+	"SCL/1036":  "15.6",
+	"SCL/1037":  "15.6",
 	"SMTL/1026": "15.5",
 	"SMTL/1047": "16.5",
 }
 
 var (
 	upsFirmware = regexp.MustCompile("(?i)\\bUPS\\s+([0-9]{1,2}\\.[0-9]{1,2})\\s*/\\s*ID\\s*=\\s*([0-9]{1,5})\\b")
-	familySKU = regexp.MustCompile("(?i)\\b(SMTL|SMT|SMX|SMC|SCL|SRTL|SRT|CSH|XP|XU)([0-9][A-Z0-9-]*)\\b")
-	legacySKU = regexp.MustCompile("(?i)\\b(SURTD|SURTA|SURT|SUA|SUM|SU)[0-9][A-Z0-9-]*\\b")
+	familySKU   = regexp.MustCompile("(?i)\\b(SMTL|SMT|SMX|SMC|SCL|SRTL|SRT|CSH|XP|XU)([0-9][A-Z0-9-]*)\\b")
+	legacySKU   = regexp.MustCompile("(?i)\\b(SURTD|SURTA|SURT|SUA|SUM|SU)[0-9][A-Z0-9-]*\\b")
 )
 
 // Result is shown only in the authenticated web UI. A status of "outdated"
