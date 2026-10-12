@@ -2,8 +2,8 @@
 package web
 
 import (
-	"context"
 	"crypto/subtle"
+	"context"
 	"embed"
 	"encoding/csv"
 	"encoding/json"
@@ -82,9 +82,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	if h.securityRoutes(w, r) {
-		return
-	}
+	if h.securityRoutes(w, r) { return }
 	if h.historyRoutes(w, r) {
 		return
 	}
@@ -228,87 +226,47 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		respondJSON(w, h.PowerConfig())
 	case "/api/power/host-settings":
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", 405)
-			return
-		}
-		if !csrfValid(r, csrf) {
-			http.Error(w, "invalid CSRF token", 403)
-			return
-		}
-		r.Body = http.MaxBytesReader(w, r.Body, 1024)
+		if r.Method != http.MethodPost { http.Error(w,"method not allowed",405); return }
+		if !csrfValid(r,csrf) { http.Error(w,"invalid CSRF token",403); return }
+		r.Body=http.MaxBytesReader(w,r.Body,1024)
 		var v hostsettings.Settings
-		dec := json.NewDecoder(r.Body)
-		dec.DisallowUnknownFields()
-		if dec.Decode(&v) != nil || dec.Decode(&struct{}{}) != io.EOF {
-			http.Error(w, "invalid shutdown settings", 400)
-			return
-		}
-		if err := v.Validate(); err != nil {
-			http.Error(w, err.Error(), 400)
-			return
-		}
+		dec:=json.NewDecoder(r.Body);dec.DisallowUnknownFields()
+		if dec.Decode(&v)!=nil || dec.Decode(&struct{}{})!=io.EOF { http.Error(w,"invalid shutdown settings",400); return }
+		if err:=v.Validate();err!=nil{http.Error(w,err.Error(),400);return}
 		if v.Managed {
-			ups := h.Monitor.Snapshot()
-			if !ups.Healthy || ups.Current == nil || ups.Current.Power != apc.Online {
-				http.Error(w, "UPS is not confirmed ONLINE; shutdown settings cannot be changed", 409)
-				return
+			ups:=h.Monitor.Snapshot()
+			if !ups.Healthy || ups.Current==nil || ups.Current.Power!=apc.Online {
+				http.Error(w,"UPS is not confirmed ONLINE; shutdown settings cannot be changed",409);return
 			}
 		}
-		ctx, cancel := context.WithTimeout(r.Context(), 50*time.Second)
+		ctx,cancel:=context.WithTimeout(r.Context(),50*time.Second)
 		defer cancel()
-		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(55 * time.Second))
-		result, err := applyHostSettings(ctx, v)
-		if err != nil {
-			http.Error(w, "Local apcupsd settings service unavailable: "+err.Error(), 503)
-			return
-		}
-		if result.Error != "" {
-			http.Error(w, result.Error, 409)
-			return
-		}
-		respondJSON(w, result)
+		_=http.NewResponseController(w).SetWriteDeadline(time.Now().Add(55*time.Second))
+		result,err:=applyHostSettings(ctx,v)
+		if err!=nil {http.Error(w,"Local apcupsd settings service unavailable: "+err.Error(),503);return}
+		if result.Error!="" {http.Error(w,result.Error,409);return}
+		respondJSON(w,result)
 	case "/api/power/host-thresholds":
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", 405)
-			return
-		}
+		if r.Method != http.MethodGet { http.Error(w, "method not allowed", 405); return }
 		respondJSON(w, hostShutdownSettings())
 	case "/api/power/test-ssh":
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", 405)
-			return
-		}
-		if !csrfValid(r, csrf) {
-			http.Error(w, "invalid CSRF token", 403)
-			return
-		}
+		if r.Method != http.MethodPost { http.Error(w, "method not allowed", 405); return }
+		if !csrfValid(r, csrf) { http.Error(w, "invalid CSRF token", 403); return }
 		r.Body = http.MaxBytesReader(w, r.Body, 1024)
-		var req struct {
-			ID string `json:"id"`
-		}
+		var req struct { ID string `json:"id"` }
 		decoder := json.NewDecoder(r.Body)
 		decoder.DisallowUnknownFields()
 		if decoder.Decode(&req) != nil || decoder.Decode(&struct{}{}) != io.EOF || req.ID == "" {
-			http.Error(w, "invalid saved device ID", 400)
-			return
+			http.Error(w, "invalid saved device ID", 400); return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 		defer cancel()
 		result, found := h.testSavedSSH(ctx, req.ID)
-		if !found {
-			http.Error(w, "saved device not found", 404)
-			return
-		}
+		if !found { http.Error(w, "saved device not found", 404); return }
 		respondJSON(w, result)
 	case "/api/power/ssh-key":
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", 405)
-			return
-		}
-		respondJSON(w, struct {
-			Keys []power.SSHPublicKey `json:"keys"`
-		}{power.ServicePublicKeys()})
+		if r.Method != http.MethodGet { http.Error(w, "method not allowed", 405); return }
+		respondJSON(w, struct { Keys []power.SSHPublicKey `json:"keys"` }{power.ServicePublicKeys()})
 	case "/api/power/state":
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", 405)
@@ -424,9 +382,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		if ip := net.ParseIP(addr); ip != nil && (errors.Is(err, auth.ErrCredentials) || errors.Is(err, auth.ErrSuspicious)) {
 			log.Printf(authFailureLogFormat, ip.String())
 		}
-		if errors.Is(err, auth.ErrSuspicious) && h.Mail != nil {
-			go h.Mail.SendSecurityWarning()
-		}
+		if errors.Is(err, auth.ErrSuspicious) && h.Mail != nil { go h.Mail.SendSecurityWarning() }
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if !errors.Is(err, auth.ErrCredentials) && strings.Contains(err.Error(), "too many") {
 			w.WriteHeader(http.StatusTooManyRequests)
