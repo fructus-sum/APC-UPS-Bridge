@@ -47,7 +47,7 @@ function draw(root,report,series,percent){
   let path='',open=false;
   for(const p of report.points){
    const v=p[entry.key],t=new Date(p.time).getTime();
-   if((!p.observed && !(entry.allowEvent && p.battery_from_event))||typeof v!=='number'||!Number.isFinite(v)){open=false;continue;}
+   if(!p.observed||typeof v!=='number'||!Number.isFinite(v)){open=false;continue;}
    const xp=x(t).toFixed(2),yp=y(v).toFixed(2);
    path+=(open?'L':'M')+xp+' '+yp+' ';open=true;
   }
@@ -96,7 +96,7 @@ function drawBattery(report){
  }
  for(const p of report.points){
   if(!p.battery_from_event||typeof p.battery_percent!=='number')continue;
-  chart.append(svg('circle',{cx:x(p.time),cy:y(p.battery_percent),r:3.5,fill:'#24986b',stroke:'#fff','stroke-width':1}));
+  if(!p.observed)chart.append(svg('circle',{cx:x(p.time),cy:y(p.battery_percent),r:3.5,fill:'#24986b',stroke:'#fff','stroke-width':1}));
  }
 }
 function summary(report){
