@@ -33,6 +33,7 @@ import (
 var version = "development" // overridden by -ldflags at release build time
 
 func main() { os.Exit(run()) }
+
 func run() int {
 	showVersion := flag.Bool("version", false, "print application version and exit")
 	command := flag.String("apcaccess", "apcaccess", "apcaccess executable (PATH or absolute path)")
@@ -57,22 +58,7 @@ func run() int {
 		return 0
 	}
 	if *setPassword {
-		b, err := io.ReadAll(io.LimitReader(os.Stdin, 1024))
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "read password:", err)
-			return 1
-		}
-		p := strings.TrimRight(string(b), "\r\n")
-		if strings.ContainsAny(p, "\r\n") {
-			fmt.Fprintln(os.Stderr, "password must occupy one line")
-			return 2
-		}
-		if err = auth.Initialize(*authFile, p); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			return 2
-		}
-		fmt.Println("Administrator password configured. Restart a running service after CLI password reset.")
-		return 0
+		return runSetPassword(*authFile)
 	}
 	if *interval < 5*time.Second || *interval > time.Minute || *interval%time.Second != 0 || *timeout <= 0 || *retention < 0 || *retention > 36500 {
 		fmt.Fprintln(os.Stderr, "invalid duration/retention: poll interval must be whole seconds 5–60; timeout positive; retention 0–36500")
@@ -85,13 +71,11 @@ func run() int {
 		select {
 		case apply <- s:
 		default:
-			{
-				select {
-				case <-apply:
-				default:
-				}
-				apply <- s
+			select {
+			case <-apply:
+			default:
 			}
+			apply <- s
 		}
 	}
 	settings, err := config.Open(*settingsFile, defaults, settingsChanged)
@@ -110,31 +94,10 @@ func run() int {
 		logger.Print(err)
 		return 2
 	}
-	clean := func(days int) {
-		// Preserve event logs while an incident report is still pending.
-		if notify.ReportPending(*emailStatePath) {
-			return
-		}
-		if n, e := events.Cleanup(*logDir, days, time.Now()); e != nil {
-			logger.Printf("event cleanup: %v", e)
-		} else if n > 0 {
-			logger.Printf("removed %d expired monthly log files", n)
-		}
-	}
+	clean := func(days int) { cleanEventLogs(logger, *logDir, *emailStatePath, days) }
 	clean(current.RetentionDays)
 	if *once {
-		err := mon.Poll(context.Background())
-		data, encErr := json.MarshalIndent(mon.Snapshot(), "", "  ")
-		if encErr != nil {
-			logger.Print(encErr)
-			return 1
-		}
-		fmt.Println(string(data))
-		if err != nil {
-			logger.Printf("poll error: %v", err)
-			return 1
-		}
-		return 0
+		return runOnce(logger, mon)
 	}
 	admin, err := auth.Open(*authFile)
 	if err != nil {
@@ -196,47 +159,23 @@ func run() int {
 	emailUpdates := make(chan notify.Sample, 64)
 	go mailEngine.Run(ctx, emailUpdates, func(err error) { logger.Printf("email report state: %v", err) })
 	go statusMonitor.Run(ctx)
-	lastPollError := false
-	lastPowerError := false
-	lastHistoryError := false
+	pollLatch := &errLatch{logger: logger}
+	powerLatch := &errLatch{logger: logger, stopped: func() bool { return ctx.Err() != nil }}
+	historyLatch := &errLatch{logger: logger}
 	poll := func() {
 		err := mon.Poll(ctx)
 		if ctx.Err() != nil {
 			// Stopping: the monitor snapshot is stale, so never act on it.
 			return
 		}
-		if err != nil && ctx.Err() == nil && !lastPollError {
-			logger.Printf("UPS poll error (repeats suppressed): %v", err)
-		}
-		if err == nil && lastPollError {
-			logger.Print("UPS polling restored")
-		}
-		lastPollError = err != nil
+		pollLatch.Report(err, "UPS poll error (repeats suppressed): %v", "UPS polling restored")
 		status := mon.Snapshot()
 		if err == nil && status.Healthy && status.Current != nil {
-			sampleErr := historyStore.Record(status.Current)
-			if sampleErr != nil && !lastHistoryError {
-				logger.Printf("history sample error (repeats suppressed): %v", sampleErr)
-			}
-			lastHistoryError = sampleErr != nil
+			historyLatch.Report(historyStore.Record(status.Current), "history sample error (repeats suppressed): %v", "")
 		}
-		automationErr := powerController.Observe(ctx, status)
-		if automationErr != nil && ctx.Err() == nil && !lastPowerError {
-			logger.Printf("power automation error (repeats suppressed): %v", automationErr)
-		}
-		if automationErr == nil && lastPowerError {
-			logger.Print("power automation operating normally")
-		}
-		lastPowerError = automationErr != nil
-		pcfg := powerStore.Get()
-		var targets []notify.Target
-		for _, d := range pcfg.Devices {
-			if d.ShutdownEnabled {
-				targets = append(targets, notify.Target{ID: d.ID, Name: d.Name, Host: d.Host, Port: d.SSHPort})
-			}
-		}
+		powerLatch.Report(powerController.Observe(ctx, status), "power automation error (repeats suppressed): %v", "power automation operating normally")
 		select {
-		case emailUpdates <- notify.Sample{UPS: status, Targets: targets}:
+		case emailUpdates <- notify.Sample{UPS: status, Targets: notifyTargets(powerStore.Get())}:
 		default:
 			logger.Print("email worker backed up; newest UPS notification sample dropped")
 		}
@@ -270,4 +209,84 @@ func run() int {
 			clean(current.RetentionDays)
 		}
 	}
+}
+
+// runSetPassword initializes the admin password from one line of standard input.
+func runSetPassword(authFile string) int {
+	b, err := io.ReadAll(io.LimitReader(os.Stdin, 1024))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "read password:", err)
+		return 1
+	}
+	p := strings.TrimRight(string(b), "\r\n")
+	if strings.ContainsAny(p, "\r\n") {
+		fmt.Fprintln(os.Stderr, "password must occupy one line")
+		return 2
+	}
+	if err = auth.Initialize(authFile, p); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 2
+	}
+	fmt.Println("Administrator password configured. Restart a running service after CLI password reset.")
+	return 0
+}
+
+// runOnce performs a single hardware poll and prints the snapshot as JSON.
+func runOnce(logger *log.Logger, mon *monitor.Monitor) int {
+	err := mon.Poll(context.Background())
+	data, encErr := json.MarshalIndent(mon.Snapshot(), "", "  ")
+	if encErr != nil {
+		logger.Print(encErr)
+		return 1
+	}
+	fmt.Println(string(data))
+	if err != nil {
+		logger.Printf("poll error: %v", err)
+		return 1
+	}
+	return 0
+}
+
+// cleanEventLogs removes expired monthly event logs, except while an incident
+// report is still pending.
+func cleanEventLogs(logger *log.Logger, logDir, emailStatePath string, days int) {
+	if notify.ReportPending(emailStatePath) {
+		return
+	}
+	if n, err := events.Cleanup(logDir, days, time.Now()); err != nil {
+		logger.Printf("event cleanup: %v", err)
+	} else if n > 0 {
+		logger.Printf("removed %d expired monthly log files", n)
+	}
+}
+
+// notifyTargets lists the approved devices whose shutdown the email report
+// must wait for.
+func notifyTargets(cfg power.Config) []notify.Target {
+	var targets []notify.Target
+	for _, d := range cfg.Devices {
+		if d.ShutdownEnabled {
+			targets = append(targets, notify.Target{ID: d.ID, Name: d.Name, Host: d.Host, Port: d.SSHPort})
+		}
+	}
+	return targets
+}
+
+// errLatch logs only the edges of a repeating failure: the first error after
+// success, and (when a restore message is given) the first success after errors.
+type errLatch struct {
+	logger  *log.Logger
+	stopped func() bool // optional; failures are not logged once it returns true
+	failing bool
+}
+
+// Report records the outcome of one attempt. failFormat takes the error as %v.
+func (l *errLatch) Report(err error, failFormat, restoreMsg string) {
+	if err != nil && !l.failing && (l.stopped == nil || !l.stopped()) {
+		l.logger.Printf(failFormat, err)
+	}
+	if err == nil && l.failing && restoreMsg != "" {
+		l.logger.Print(restoreMsg)
+	}
+	l.failing = err != nil
 }
