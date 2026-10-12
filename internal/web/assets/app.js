@@ -28,7 +28,7 @@ const selfTestResult=code=>code?selfTestCodes[code.toUpperCase()]||code:'Not rep
 function selfTestInterval(value){
  if(!value)return 'Not reported';
  const v=value.toUpperCase();
- return /^\d+(\.\d+)?$/.test(value)?'Every '+value+' hours':v==='OFF'||v==='NONE'?'Off':v==='ON'?'On':value;
+ return /^\d+(\.\d+)?$/.test(value)?'Every '+value+(Number(value)===1?' hour':' hours'):v==='OFF'||v==='NONE'?'Off':v==='ON'?'On':value;
 }
 async function refreshDashboard(){
  try{
@@ -47,7 +47,7 @@ async function refreshDashboard(){
   el('battery-note').textContent=s.healthy?'Live UPS reading':'Showing last known value · stale';
   el('battery-bar').style.width=typeof r.battery_percent==='number'?Math.min(100,Math.max(0,r.battery_percent))+'%':'0%';
   el('battery-bar').className='battery-fill'+(typeof r.battery_percent==='number'&&r.battery_percent<=20?' low':'');
- }catch(err){el('health').textContent='Unable to load status';el('health').className='state error';}
+ }catch(err){el('health').textContent='Unable to load status';el('health').className='state error';if(el('model').textContent==='Loading…')el('model').textContent='Not reported';}
 }
 async function refreshFirmware(){
  const installed=el('firmware-installed'),status=el('firmware-status'),id=el('firmware-ups-id');
