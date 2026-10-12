@@ -41,6 +41,7 @@ func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
 	if err = os.Rename(tmp, path); err != nil {
 		return err
 	}
+	// A rename alone does not guarantee durability across sudden power loss.
 	d, err := os.Open(dir)
 	if err != nil {
 		return err
