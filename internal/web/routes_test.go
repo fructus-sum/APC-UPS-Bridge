@@ -1,7 +1,6 @@
 package web
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/url"
@@ -9,91 +8,24 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fructus-sum/APC-UPS-Bridge/internal/auth"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/config"
-	"github.com/fructus-sum/APC-UPS-Bridge/internal/events"
-	"github.com/fructus-sum/APC-UPS-Bridge/internal/history"
-	"github.com/fructus-sum/APC-UPS-Bridge/internal/monitor"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/notify"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/power"
 )
 
-const routesPassphrase = "long secret passphrase"
-
-// routeEnv is one fully wired handler plus a logged-in session.
-type routeEnv struct {
-	h      http.Handler
-	cookie *http.Cookie
-	csrf   string
-	auth   *auth.Store
-}
 
 // buildRouteEnv wires the handler the way the daemon does. Variant "bare"
 // leaves out power, email and history; "offline" never polls the UPS.
-func buildRouteEnv(t *testing.T, variant string) *routeEnv {
+func buildRouteEnv(t *testing.T, variant string) *fixture {
 	t.Helper()
-	dir := t.TempDir()
-	authPath := filepath.Join(dir, "auth.json")
-	if err := auth.Initialize(authPath, routesPassphrase); err != nil {
-		t.Fatal(err)
-	}
-	admin, err := auth.Open(authPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	logs := filepath.Join(dir, "logs")
-	mon, err := monitor.New(testReader{}, events.FileWriter{Dir: logs}, 20)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if variant != "offline" {
-		if err = mon.Poll(context.Background()); err != nil {
-			t.Fatal(err)
-		}
-	}
-	prefs, err := config.Open(filepath.Join(dir, "prefs.json"), config.Settings{PollIntervalSeconds: 10, LowBatteryPercent: 20, RetentionDays: 365}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var handler http.Handler
 	if variant == "bare" {
-		handler, err = New(mon, admin, prefs, logs)
-		if err != nil {
-			t.Fatal(err)
-		}
-	} else {
-		store, err := power.OpenConfig(filepath.Join(dir, "power.json"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		ctrl, err := power.OpenController(store, filepath.Join(dir, "power-state.json"), events.FileWriter{Dir: logs}, inertExec{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		handler, err = New(mon, admin, prefs, logs, ctrl)
-		if err != nil {
-			t.Fatal(err)
-		}
-		mstore, err := notify.OpenConfig(filepath.Join(dir, "email.json"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		cfg := notify.Config{Enabled: true, Host: "mail.example.net", Port: 465, Security: "tls", Username: "alert@example.net", Password: "secret", From: "alert@example.net", To: "owner@example.net", WaitForDevices: true}
-		if err = mstore.Save(cfg); err != nil {
-			t.Fatal(err)
-		}
-		engine, err := notify.Open(mstore, filepath.Join(dir, "state.json"), filepath.Join(dir, "events"), events.FileWriter{Dir: filepath.Join(dir, "events")}, mailSender{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		AttachEmail(handler, engine)
-		AttachHistory(handler, history.New(filepath.Join(dir, "history")))
+		return newFixture(t)
 	}
-	token, csrf, err := admin.Login("127.0.0.1", "admin", routesPassphrase)
-	if err != nil {
-		t.Fatal(err)
+	opts := []fixtureOption{withPower(), withHistory(), withMail(notify.Config{Enabled: true, Host: "mail.example.net", Port: 465, Security: "tls", Username: "alert@example.net", Password: "secret", From: "alert@example.net", To: "owner@example.net", WaitForDevices: true})}
+	if variant == "offline" {
+		opts = append(opts, withoutPoll())
 	}
-	return &routeEnv{h: handler, cookie: &http.Cookie{Name: "ups_bridge_session", Value: token}, csrf: csrf, auth: admin}
+	return newFixture(t, opts...)
 }
 
 type routeCase struct {
@@ -165,7 +97,7 @@ func TestEveryRoute(t *testing.T) {
 		{name: "login wrong method", method: put, path: "/login", anon: true, code: 405, want: "method not allowed"},
 		{name: "login bad credentials", method: post, path: "/login", body: "username=admin&password=wrong", anon: true, code: 401, ctype: html, has: "Invalid credentials or too many attempts. Try again later."},
 		{name: "login oversize", method: post, path: "/login", body: "username=" + strings.Repeat("a", 9000), anon: true, code: 400, want: "bad request"},
-		{name: "login ok", method: post, path: "/login", body: "username=admin&password=" + url.QueryEscape(routesPassphrase), anon: true, code: 303, loc: "/"},
+		{name: "login ok", method: post, path: "/login", body: "username=admin&password=" + url.QueryEscape(testPassphrase), anon: true, code: 303, loc: "/"},
 		{name: "login signed in still serves login", method: get, path: "/login", code: 200, ctype: html},
 
 		// Pages and scripts.
@@ -324,10 +256,10 @@ func TestEveryRoute(t *testing.T) {
 		{name: "logout get", method: get, path: "/logout", code: 405, want: "method not allowed"},
 		{name: "logout no csrf", method: post, path: "/logout", noCSRF: true, code: 403, want: "invalid CSRF token"},
 		{name: "logout", method: post, path: "/logout", code: 303, loc: "/login", fresh: true},
-		{name: "change-password ok", method: post, path: "/change-password", body: "old=" + url.QueryEscape(routesPassphrase) + "&new=another+long+password", code: 303, loc: "/login?changed=1", fresh: true},
+		{name: "change-password ok", method: post, path: "/change-password", body: "old=" + url.QueryEscape(testPassphrase) + "&new=another+long+password", code: 303, loc: "/login?changed=1", fresh: true},
 	}
 
-	envs := map[string]*routeEnv{}
+	envs := map[string]*fixture{}
 	for _, v := range []string{"", "bare", "offline"} {
 		envs[v] = buildRouteEnv(t, v)
 	}
@@ -338,9 +270,9 @@ func TestEveryRoute(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			env := envs[tc.variant]
-			cookie, csrf := env.cookie, env.csrf
+			cookie, csrf := env.Cookie, env.CSRF
 			if tc.fresh {
-				token, c, err := env.auth.Login("127.0.0.1", "admin", routesPassphrase)
+				token, c, err := env.Auth.Login("127.0.0.1", "admin", testPassphrase)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -352,7 +284,7 @@ func TestEveryRoute(t *testing.T) {
 			if tc.noCSRF {
 				csrf = ""
 			}
-			w := request(env.h, tc.method, tc.path, tc.body, cookie, csrf)
+			w := request(env.Handler, tc.method, tc.path, tc.body, cookie, csrf)
 			if w.Code != tc.code {
 				t.Fatalf("status %d, want %d: %s", w.Code, tc.code, w.Body.String())
 			}
@@ -386,7 +318,7 @@ func TestEveryRoute(t *testing.T) {
 
 func TestCSVDownloadHeaders(t *testing.T) {
 	env := buildRouteEnv(t, "")
-	w := request(env.h, "GET", "/api/events.csv", "", env.cookie, "")
+	w := request(env.Handler, "GET", "/api/events.csv", "", env.Cookie, "")
 	if got := w.Header().Get("Content-Disposition"); got != `attachment; filename="apc-ups-bridge-events.csv"` {
 		t.Fatalf("Content-Disposition %q", got)
 	}
@@ -394,8 +326,8 @@ func TestCSVDownloadHeaders(t *testing.T) {
 
 func TestSessionCookieAttributes(t *testing.T) {
 	env := buildRouteEnv(t, "")
-	form := url.Values{"username": {"admin"}, "password": {routesPassphrase}}.Encode()
-	w := request(env.h, "POST", "/login", form, nil, "")
+	form := url.Values{"username": {"admin"}, "password": {testPassphrase}}.Encode()
+	w := request(env.Handler, "POST", "/login", form, nil, "")
 	cookies := w.Result().Cookies()
 	if w.Code != 303 || len(cookies) != 1 {
 		t.Fatalf("login %d, %d cookies", w.Code, len(cookies))
@@ -404,11 +336,11 @@ func TestSessionCookieAttributes(t *testing.T) {
 	if c.Name != "ups_bridge_session" || c.Value == "" || c.Path != "/" || !c.HttpOnly || c.Secure || c.SameSite != http.SameSiteStrictMode || c.MaxAge != 8*3600 {
 		t.Fatalf("login cookie %+v", c)
 	}
-	csrf, ok := env.auth.Session(c.Value)
+	csrf, ok := env.Auth.Session(c.Value)
 	if !ok {
 		t.Fatal("session not valid")
 	}
-	w = request(env.h, "POST", "/logout", "", c, csrf)
+	w = request(env.Handler, "POST", "/logout", "", c, csrf)
 	cookies = w.Result().Cookies()
 	if w.Code != 303 || len(cookies) != 1 {
 		t.Fatalf("logout %d, %d cookies", w.Code, len(cookies))

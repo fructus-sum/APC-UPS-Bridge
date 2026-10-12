@@ -3,16 +3,10 @@ package web
 import (
 	"context"
 	"encoding/json"
-	"net/http"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/fructus-sum/APC-UPS-Bridge/internal/auth"
-	"github.com/fructus-sum/APC-UPS-Bridge/internal/config"
-	"github.com/fructus-sum/APC-UPS-Bridge/internal/events"
-	"github.com/fructus-sum/APC-UPS-Bridge/internal/monitor"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/power"
 )
 
@@ -24,20 +18,8 @@ func (inertProber) Ping(context.Context, string) (time.Duration, error) {
 }
 
 func TestPowerStatusRoute(t *testing.T) {
-	dir := t.TempDir()
-	authpath := filepath.Join(dir, "auth.json")
-	if err := auth.Initialize(authpath, "long secret passphrase"); err != nil {
-		t.Fatal(err)
-	}
-	admin, _ := auth.Open(authpath)
-	mon, _ := monitor.New(testReader{}, events.FileWriter{Dir: filepath.Join(dir, "logs")}, 20)
-	prefs, _ := config.Open(filepath.Join(dir, "prefs.json"), config.Settings{PollIntervalSeconds: 10, LowBatteryPercent: 20, RetentionDays: 365}, nil)
-	store, _ := power.OpenConfig(filepath.Join(dir, "power.json"))
-	ctrl, _ := power.OpenController(store, filepath.Join(dir, "power-state.json"), events.FileWriter{Dir: filepath.Join(dir, "logs")}, inertExec{})
-	h, _ := New(mon, admin, prefs, filepath.Join(dir, "logs"), ctrl)
-	token, csrf, _ := admin.Login("127.0.0.1", "admin", "long secret passphrase")
-	cookie := &http.Cookie{Name: "ups_bridge_session", Value: token}
-
+	f := newFixture(t, withPower())
+	h, cookie, csrf, ctrl, store := f.Handler, f.Cookie, f.CSRF, f.Power, f.PowerStore
 	if w := request(h, "GET", "/api/power/status", "", nil, ""); w.Code != 401 {
 		t.Fatalf("unauthenticated: %d", w.Code)
 	}

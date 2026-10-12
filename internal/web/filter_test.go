@@ -17,7 +17,7 @@ const journalPrefix = "Oct 12 10:00:00 pi apc-ups-bridge[123]: "
 
 // A failed login must write exactly the line the Fail2ban filter expects.
 func TestFailedLoginLogLineFormat(t *testing.T) {
-	h, _ := setupWeb(t)
+	h := newFixture(t).Handler
 	var out bytes.Buffer
 	log.SetOutput(&out)
 	defer log.SetOutput(os.Stderr)
