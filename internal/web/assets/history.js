@@ -129,11 +129,26 @@ async function load(){
   const report=await response.json();
   draw($('voltage-chart'),report,[{key:'input_volts',color:'#1978ad'},{key:'output_volts',color:'#20916a'}],false);
   draw($('load-chart'),report,[{key:'load_percent',color:'#b57922'}],true);
-  drawBattery(report);
   summary(report);
   $('history-message').textContent='Data is spaced by actual time. Yellow regions mark observed battery operation from event logs; outages without UPS measurements remain gaps.';
  }catch(err){$('history-message').textContent=`Could not read history: ${err.message}`;}
 }
+async function loadBattery() {
+ const days=$('battery-history-days').value;
+ const message=$('battery-history-message');
+ message.textContent='Loading battery and event history…';
+ try {
+  const response=await fetch(`/api/history/battery?days=${encodeURIComponent(days)}`,{credentials:'same-origin',cache:'no-store'});
+  if(response.status===401){location.assign('/login');return;}
+  if(!response.ok)throw new Error(`Battery history request failed (${response.status})`);
+  const report=await response.json();
+  drawBattery(report);
+  message.textContent='30-day sampled readings plus recorded power events across the selected period. Older unmeasured periods remain blank.';
+ }catch(err){message.textContent='Could not load battery history: '+err.message;}
+}
+$('battery-history-days').addEventListener('change',loadBattery);
+$('battery-history-reload').addEventListener('click',loadBattery);
+loadBattery();
 $('history-days').addEventListener('change',load);
 $('history-reload').addEventListener('click',load);
 load();
