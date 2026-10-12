@@ -3,6 +3,7 @@ package power
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -164,6 +165,18 @@ func TestStatusUnknownFailureIsOffline(t *testing.T) {
 	m.cycle(context.Background())
 	if s := stateOf(t, m, "a"); s.State != StateOffline {
 		t.Fatalf("%+v", s)
+	}
+}
+
+func TestStatusAddressFamilyUnavailable(t *testing.T) {
+	p := &fakeProber{pingErr: fmt.Errorf("wrapped: %w", ErrPingAddressFamily)}
+	m, _ := newTestMonitor(p, statusDevice("a", ""))
+	logged := 0
+	m.Logf = func(string, ...any) { logged++ }
+	m.cycle(context.Background())
+	s := stateOf(t, m, "a")
+	if s.State != StateUnavailable || !strings.Contains(s.Message, "IPv6") || logged != 0 {
+		t.Fatalf("%+v logged=%d", s, logged)
 	}
 }
 

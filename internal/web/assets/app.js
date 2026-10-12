@@ -128,7 +128,7 @@ function statusBadge(s){
  if(!s||s.state==='unknown')return{cls:'',text:'Not checked yet'};
  if(s.state==='off')return{cls:'',text:'Check off'};
  if(s.state==='unavailable')return{cls:'warn',text:'Unavailable: '+(s.message||'status cannot be checked')};
- if(s.state==='offline')return{cls:'error',text:'● Offline since '+new Date(s.since).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})};
+ if(s.state==='offline')return{cls:'error',text:'● Offline since '+new Date(s.since).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})+(s.message?' · '+s.message:'')};
  const secs=Math.max(0,Math.round((Date.now()-new Date(s.checked_at))/1000));
  return{cls:'ok',text:'● Online · checked '+(secs<10?'just now':humanDuration(secs)+' ago')+(typeof s.rtt_ms==='number'?' · '+s.rtt_ms.toFixed(1)+' ms':'')};
 }

@@ -43,7 +43,7 @@ The Power page and the dashboard show whether each configured device is online. 
 
 Each device has an **Online check** setting:
 
-- **Ping** (default): one ICMP echo request per device every 60 seconds (plus a few seconds of random jitter), using an unprivileged ICMP socket that is closed immediately. No SSH or TCP traffic is sent; host names are resolved through the system resolver as usual.
+- **Ping** (default): one ICMP echo request per device about once a minute (every 60 seconds plus a few seconds of random jitter; longer when many devices are not answering, because devices are checked one at a time), using an unprivileged ICMP socket that is closed immediately. No SSH or TCP traffic is sent; host names are resolved through the system resolver as usual.
 - **SSH port**: a TCP connect to the device's SSH port that is closed immediately. No login, no session, and no connection is ever held open. Some SSH servers log this as a disconnect before login.
 - **Off**: the device is not checked.
 

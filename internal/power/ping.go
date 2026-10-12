@@ -16,6 +16,10 @@ import (
 // datagram socket (see net.ipv4.ping_group_range).
 var ErrPingNotPermitted = errors.New("ping is not permitted for the bridge service")
 
+// ErrPingAddressFamily means the bridge host does not support the address
+// family the device resolved to (for example IPv6 turned off on the bridge).
+var ErrPingAddressFamily = errors.New("address type not supported by the bridge")
+
 // ErrPingResolve means the host name could not be resolved to an address.
 var ErrPingResolve = errors.New("host could not be resolved")
 
@@ -90,8 +94,10 @@ func isEchoReply(v6 bool, pkt, token []byte) bool {
 
 func pingSocketError(err error) error {
 	switch {
+	case errors.Is(err, syscall.EAFNOSUPPORT):
+		return ErrPingAddressFamily
 	case errors.Is(err, syscall.EACCES), errors.Is(err, syscall.EPERM),
-		errors.Is(err, syscall.EPROTONOSUPPORT), errors.Is(err, syscall.EAFNOSUPPORT):
+		errors.Is(err, syscall.EPROTONOSUPPORT):
 		return ErrPingNotPermitted
 	}
 	return fmt.Errorf("ping socket: %w", err)

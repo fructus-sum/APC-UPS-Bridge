@@ -255,6 +255,10 @@ func (m *StatusMonitor) record(d Device, ok bool, rtt time.Duration, err error) 
 			m.logPermit = true
 			m.Logf("device online checks: ping is not permitted for this service (see net.ipv4.ping_group_range); affected devices show as unavailable (repeats suppressed)")
 		}
+	case errors.Is(err, ErrPingAddressFamily):
+		s.misses = 0
+		st.State = StateUnavailable
+		st.Message = "the bridge cannot ping this kind of address (IPv6 may be turned off on the bridge); choose SSH port or Off"
 	default:
 		// A name that no longer resolves (common for DHCP hosts that are
 		// switched off) counts as a miss, with the reason shown.
