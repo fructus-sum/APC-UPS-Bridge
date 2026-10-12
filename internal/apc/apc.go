@@ -38,6 +38,14 @@ type Snapshot struct {
 	LoadPercent    *float64   `json:"load_percent,omitempty"`
 	InputVolts     *float64   `json:"input_volts,omitempty"`
 	OutputVolts    *float64   `json:"output_volts,omitempty"`
+	// Optional battery maintenance metadata from apcaccess status.
+	// These fields are read-only; older APC models may omit all of them.
+	BatteryVolts        *float64 `json:"battery_volts,omitempty"`
+	NominalBatteryVolts *float64 `json:"nominal_battery_volts,omitempty"`
+	BatteryDate         string   `json:"battery_date,omitempty"`
+	LastSelfTest        string   `json:"last_self_test,omitempty"`
+	SelfTestResult      string   `json:"self_test_result,omitempty"`
+	SelfTestInterval    string   `json:"self_test_interval,omitempty"`
 }
 
 // Parse accepts any apcaccess output containing a STATUS line. Unknown metrics
@@ -75,6 +83,12 @@ func Parse(data []byte, now time.Time) (Snapshot, error) {
 		LoadPercent:    metric(fields["LOADPCT"], false),
 		InputVolts:     metric(fields["LINEV"], false),
 		OutputVolts:    metric(fields["OUTPUTV"], false),
+		BatteryVolts:        metric(fields["BATTV"], false),
+		NominalBatteryVolts: metric(fields["NOMBATTV"], false),
+		BatteryDate:         fields["BATTDATE"],
+		LastSelfTest:        fields["LASTSTEST"],
+		SelfTestResult:      fields["SELFTEST"],
+		SelfTestInterval:    fields["STESTI"],
 	}
 	return snap, nil
 }
