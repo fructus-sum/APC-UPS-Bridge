@@ -91,7 +91,7 @@ func TestEveryRoute(t *testing.T) {
 		// Public pages.
 		{name: "css", method: get, path: "/assets/app.css", anon: true, code: 200, ctype: "text/css; charset=utf-8"},
 		{name: "css signed in", method: get, path: "/assets/app.css", code: 200, ctype: "text/css; charset=utf-8"},
-		{name: "css post signed in", method: post, path: "/assets/app.css", code: 404, want: "404 page not found"},
+		{name: "css post signed in", method: post, path: "/assets/app.css", code: 405, want: "method not allowed"},
 		{name: "login page", method: get, path: "/login", anon: true, code: 200, ctype: html, has: "<form"},
 		{name: "login page changed", method: get, path: "/login?changed=1", anon: true, code: 200, ctype: html, has: "Password updated. Sign in again."},
 		{name: "login wrong method", method: put, path: "/login", anon: true, code: 405, want: "method not allowed"},

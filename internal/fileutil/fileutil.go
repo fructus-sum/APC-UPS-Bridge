@@ -42,12 +42,7 @@ func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
 		return err
 	}
 	// A rename alone does not guarantee durability across sudden power loss.
-	d, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	defer d.Close()
-	return d.Sync()
+	return syncDir(dir)
 }
 
 // WriteJSONAtomic stores v as indented JSON with a trailing newline.

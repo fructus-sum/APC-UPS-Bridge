@@ -104,6 +104,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = page.Execute(w, viewData{Page: r.URL.Path, CSRF: csrf})
+	case "/assets/app.css":
+		// GET is served before the session check; other methods are refused.
+		requireMethod(w, r, http.MethodGet)
 	case "/assets/app.js", "/assets/common.js":
 		if !requireMethod(w, r, http.MethodGet) {
 			return
