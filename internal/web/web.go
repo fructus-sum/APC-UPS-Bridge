@@ -97,15 +97,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.URL.Path {
 	case "/", "/events", "/settings", "/power", "/history", "/security":
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", 405)
+		if !requireMethod(w, r, http.MethodGet) {
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = page.Execute(w, viewData{Page: r.URL.Path, CSRF: csrf})
 	case "/assets/app.js":
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", 405)
+		if !requireMethod(w, r, http.MethodGet) {
 			return
 		}
 		b, err := static.ReadFile(strings.TrimPrefix(r.URL.Path, "/"))
@@ -116,21 +114,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 		_, _ = w.Write(b)
 	case "/api/status":
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", 405)
+		if !requireMethod(w, r, http.MethodGet) {
 			return
 		}
 		respondJSON(w, h.Monitor.Snapshot())
 	case "/api/firmware":
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		if !requireMethod(w, r, http.MethodGet) {
 			return
 		}
 		status := h.Monitor.Snapshot()
 		respondJSON(w, firmware.Check(status.Current))
 	case "/api/events", "/api/events.csv", "/api/report":
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", 405)
+		if !requireMethod(w, r, http.MethodGet) {
 			return
 		}
 		days, ok := queryInt(r, "days", 30, 0, 36500)
@@ -168,24 +163,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			respondJSON(w, h.Config.Get())
 			return
 		}
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", 405)
+		if !requireMethod(w, r, http.MethodPost) {
 			return
 		}
-		if !csrfValid(r, csrf) {
-			http.Error(w, "invalid CSRF token", 403)
+		if !requireCSRF(w, r, csrf) {
 			return
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, 4096)
 		var value config.Settings
-		decoder := json.NewDecoder(r.Body)
-		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(&value); err != nil {
-			http.Error(w, "invalid settings", 400)
-			return
-		}
-		if err := decoder.Decode(&struct{}{}); err != io.EOF {
-			http.Error(w, "unexpected extra data", 400)
+		if err := decodeStrict(w, r, 4096, &value); err != nil {
+			http.Error(w, bodyErrorText(err, "invalid settings"), 400)
 			return
 		}
 		if err := h.Config.Save(value); err != nil {
@@ -202,24 +188,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			respondJSON(w, h.PowerConfig())
 			return
 		}
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", 405)
+		if !requireMethod(w, r, http.MethodPost) {
 			return
 		}
-		if !csrfValid(r, csrf) {
-			http.Error(w, "invalid CSRF token", 403)
+		if !requireCSRF(w, r, csrf) {
 			return
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, 32768)
 		var value power.Config
-		decoder := json.NewDecoder(r.Body)
-		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(&value); err != nil {
-			http.Error(w, "invalid power rules", 400)
-			return
-		}
-		if err := decoder.Decode(&struct{}{}); err != io.EOF {
-			http.Error(w, "unexpected extra data", 400)
+		if err := decodeStrict(w, r, 32768, &value); err != nil {
+			http.Error(w, bodyErrorText(err, "invalid power rules"), 400)
 			return
 		}
 		if err := h.Power.UpdateConfig(value); err != nil {
@@ -231,19 +208,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		respondJSON(w, h.PowerConfig())
 	case "/api/power/host-settings":
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", 405)
+		if !requireMethod(w, r, http.MethodPost) {
 			return
 		}
-		if !csrfValid(r, csrf) {
-			http.Error(w, "invalid CSRF token", 403)
+		if !requireCSRF(w, r, csrf) {
 			return
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, 1024)
 		var v hostsettings.Settings
-		dec := json.NewDecoder(r.Body)
-		dec.DisallowUnknownFields()
-		if dec.Decode(&v) != nil || dec.Decode(&struct{}{}) != io.EOF {
+		if decodeStrict(w, r, 1024, &v) != nil {
 			http.Error(w, "invalid shutdown settings", 400)
 			return
 		}
@@ -252,8 +224,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if v.Managed {
-			ups := h.Monitor.Snapshot()
-			if !ups.Healthy || ups.Current == nil || ups.Current.Power != apc.Online {
+			if !h.onlineConfirmed() {
 				http.Error(w, "UPS is not confirmed ONLINE; shutdown settings cannot be changed", 409)
 				return
 			}
@@ -272,27 +243,21 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		respondJSON(w, result)
 	case "/api/power/host-thresholds":
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", 405)
+		if !requireMethod(w, r, http.MethodGet) {
 			return
 		}
 		respondJSON(w, hostShutdownSettings())
 	case "/api/power/test-ssh":
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", 405)
+		if !requireMethod(w, r, http.MethodPost) {
 			return
 		}
-		if !csrfValid(r, csrf) {
-			http.Error(w, "invalid CSRF token", 403)
+		if !requireCSRF(w, r, csrf) {
 			return
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, 1024)
 		var req struct {
 			ID string `json:"id"`
 		}
-		decoder := json.NewDecoder(r.Body)
-		decoder.DisallowUnknownFields()
-		if decoder.Decode(&req) != nil || decoder.Decode(&struct{}{}) != io.EOF || req.ID == "" {
+		if decodeStrict(w, r, 1024, &req) != nil || req.ID == "" {
 			http.Error(w, "invalid saved device ID", 400)
 			return
 		}
@@ -305,16 +270,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		respondJSON(w, result)
 	case "/api/power/ssh-key":
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", 405)
+		if !requireMethod(w, r, http.MethodGet) {
 			return
 		}
 		respondJSON(w, struct {
 			Keys []power.SSHPublicKey `json:"keys"`
 		}{power.ServicePublicKeys()})
 	case "/api/power/state":
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", 405)
+		if !requireMethod(w, r, http.MethodGet) {
 			return
 		}
 		if h.Power == nil {
@@ -323,12 +286,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		respondJSON(w, h.Power.View())
 	case "/change-password":
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", 405)
+		if !requireMethod(w, r, http.MethodPost) {
 			return
 		}
-		if !csrfValid(r, csrf) {
-			http.Error(w, "invalid CSRF token", 403)
+		if !requireCSRF(w, r, csrf) {
 			return
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, 4096)
@@ -343,19 +304,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.Auth.Logout(token)
-		clearCookie(w, r)
+		setSessionCookie(w, r, "", -1)
 		http.Redirect(w, r, "/login?changed=1", http.StatusSeeOther)
 	case "/logout":
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", 405)
+		if !requireMethod(w, r, http.MethodPost) {
 			return
 		}
-		if !csrfValid(r, csrf) {
-			http.Error(w, "invalid CSRF token", 403)
+		if !requireCSRF(w, r, csrf) {
 			return
 		}
 		h.Auth.Logout(token)
-		clearCookie(w, r)
+		setSessionCookie(w, r, "", -1)
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 	default:
 		http.NotFound(w, r)
@@ -382,7 +341,7 @@ func respondJSON(w http.ResponseWriter, value any) {
 	_ = json.NewEncoder(w).Encode(value)
 }
 func (h *Handler) session(r *http.Request) (string, string, bool) {
-	c, err := r.Cookie("ups_bridge_session")
+	c, err := r.Cookie(sessionCookieName)
 	if err != nil {
 		return "", "", false
 	}
@@ -396,8 +355,10 @@ func csrfValid(r *http.Request, expected string) bool {
 	}
 	return actual != "" && subtle.ConstantTimeCompare([]byte(actual), []byte(expected)) == 1
 }
-func clearCookie(w http.ResponseWriter, r *http.Request) {
-	http.SetCookie(w, &http.Cookie{Name: "ups_bridge_session", Value: "", Path: "/", HttpOnly: true, Secure: r.TLS != nil, SameSite: http.SameSiteStrictMode, MaxAge: -1})
+
+// setSessionCookie sets (or, with maxAge -1, clears) the session cookie.
+func setSessionCookie(w http.ResponseWriter, r *http.Request, value string, maxAge int) {
+	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: value, Path: "/", HttpOnly: true, Secure: r.TLS != nil, SameSite: http.SameSiteStrictMode, MaxAge: maxAge})
 }
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
@@ -409,8 +370,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		_ = login.Execute(w, data)
 		return
 	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", 405)
+	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 8192)
@@ -439,7 +399,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		_ = login.Execute(w, viewData{Error: "Invalid credentials or too many attempts. Try again later."})
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: "ups_bridge_session", Value: token, Path: "/", HttpOnly: true, Secure: r.TLS != nil, SameSite: http.SameSiteStrictMode, MaxAge: int((8 * time.Hour).Seconds())})
+	setSessionCookie(w, r, token, int(sessionLifetime.Seconds()))
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
@@ -455,4 +415,60 @@ func New(mon *monitor.Monitor, a *auth.Store, c *config.Store, logs string, powe
 		h.Power = powers[0]
 	}
 	return h, nil
+}
+
+const (
+	sessionCookieName = "ups_bridge_session"
+	sessionLifetime   = 8 * time.Hour
+)
+
+// requireMethod answers 405 and returns false unless the request uses method.
+func requireMethod(w http.ResponseWriter, r *http.Request, method string) bool {
+	if r.Method != method {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return false
+	}
+	return true
+}
+
+// requireCSRF answers 403 and returns false unless the request carries csrf.
+func requireCSRF(w http.ResponseWriter, r *http.Request, csrf string) bool {
+	if !csrfValid(r, csrf) {
+		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		return false
+	}
+	return true
+}
+
+var errTrailingData = errors.New("unexpected extra data")
+
+// decodeStrict reads one JSON value of at most limit bytes into dst, rejecting
+// unknown fields and anything after the value. Callers word their own 400
+// reply; bodyErrorText gives the usual one.
+func decodeStrict(w http.ResponseWriter, r *http.Request, limit int64, dst any) error {
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(dst); err != nil {
+		return err
+	}
+	if decoder.Decode(&struct{}{}) != io.EOF {
+		return errTrailingData
+	}
+	return nil
+}
+
+// bodyErrorText is the 400 text for a decodeStrict failure: invalid when the
+// value itself was bad, a fixed message when extra data followed it.
+func bodyErrorText(err error, invalid string) string {
+	if errors.Is(err, errTrailingData) {
+		return errTrailingData.Error()
+	}
+	return invalid
+}
+
+// onlineConfirmed reports whether the UPS is healthy and running on mains power.
+func (h *Handler) onlineConfirmed() bool {
+	s := h.Monitor.Snapshot()
+	return s.Healthy && s.Current != nil && s.Current.Power == apc.Online
 }

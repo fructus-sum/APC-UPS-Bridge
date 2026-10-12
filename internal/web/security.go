@@ -32,8 +32,7 @@ func (h *Handler) securityRoutes(w http.ResponseWriter, r *http.Request) bool {
 	if r.URL.Path != "/api/security/fail2ban" {
 		return false
 	}
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, http.MethodGet) {
 		return true
 	}
 	f, err := os.Open(fail2banLogPath)

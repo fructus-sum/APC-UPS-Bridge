@@ -2,13 +2,10 @@ package web
 
 import (
 	"context"
-	"encoding/json"
 	"html/template"
-	"io"
 	"net/http"
 	"time"
 
-	"github.com/fructus-sum/APC-UPS-Bridge/internal/apc"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/notify"
 )
 
@@ -24,16 +21,14 @@ func AttachEmail(h http.Handler, engine *notify.Engine) {
 func (h *Handler) emailRoutes(w http.ResponseWriter, r *http.Request, csrf string) bool {
 	switch r.URL.Path {
 	case "/email":
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", 405)
+		if !requireMethod(w, r, http.MethodGet) {
 			return true
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = emailPage.Execute(w, viewData{Page: "/email", CSRF: csrf})
 		return true
 	case "/assets/email.js":
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", 405)
+		if !requireMethod(w, r, http.MethodGet) {
 			return true
 		}
 		b, err := static.ReadFile("assets/email.js")
@@ -53,24 +48,15 @@ func (h *Handler) emailRoutes(w http.ResponseWriter, r *http.Request, csrf strin
 			respondJSON(w, map[string]any{"settings": h.Mail.Config(), "status": h.Mail.View()})
 			return true
 		}
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", 405)
+		if !requireMethod(w, r, http.MethodPost) {
 			return true
 		}
-		if !csrfValid(r, csrf) {
-			http.Error(w, "invalid CSRF token", 403)
+		if !requireCSRF(w, r, csrf) {
 			return true
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, 4096)
 		var v notify.Config
-		decoder := json.NewDecoder(r.Body)
-		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(&v); err != nil {
-			http.Error(w, "invalid SMTP settings", 400)
-			return true
-		}
-		if err := decoder.Decode(&struct{}{}); err != io.EOF {
-			http.Error(w, "unexpected extra data", 400)
+		if err := decodeStrict(w, r, 4096, &v); err != nil {
+			http.Error(w, bodyErrorText(err, "invalid SMTP settings"), 400)
 			return true
 		}
 		if err := h.Mail.SaveConfig(v); err != nil {
@@ -84,16 +70,13 @@ func (h *Handler) emailRoutes(w http.ResponseWriter, r *http.Request, csrf strin
 			http.Error(w, "email reporting unavailable", 503)
 			return true
 		}
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", 405)
+		if !requireMethod(w, r, http.MethodPost) {
 			return true
 		}
-		if !csrfValid(r, csrf) {
-			http.Error(w, "invalid CSRF token", 403)
+		if !requireCSRF(w, r, csrf) {
 			return true
 		}
-		s := h.Monitor.Snapshot()
-		if !s.Healthy || s.Current == nil || s.Current.Power != apc.Online {
+		if !h.onlineConfirmed() {
 			http.Error(w, "test email only available on verified mains power", 409)
 			return true
 		}

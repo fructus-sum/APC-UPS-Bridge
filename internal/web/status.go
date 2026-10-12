@@ -19,8 +19,7 @@ func (h *Handler) statusRoutes(w http.ResponseWriter, r *http.Request) bool {
 	if r.URL.Path != "/api/power/status" {
 		return false
 	}
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, http.MethodGet) {
 		return true
 	}
 	devices := []power.DeviceStatus{}

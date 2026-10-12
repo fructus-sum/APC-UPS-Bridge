@@ -18,8 +18,7 @@ func AttachHistory(h http.Handler, store *history.Store) {
 func (h *Handler) historyRoutes(w http.ResponseWriter, r *http.Request) bool {
 	switch r.URL.Path {
 	case "/assets/history.js":
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		if !requireMethod(w, r, http.MethodGet) {
 			return true
 		}
 		b, err := static.ReadFile("assets/history.js")
@@ -31,8 +30,7 @@ func (h *Handler) historyRoutes(w http.ResponseWriter, r *http.Request) bool {
 		_, _ = w.Write(b)
 		return true
 	case "/api/history/battery":
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		if !requireMethod(w, r, http.MethodGet) {
 			return true
 		}
 		if h.History == nil {
@@ -55,8 +53,7 @@ func (h *Handler) historyRoutes(w http.ResponseWriter, r *http.Request) bool {
 		respondJSON(w, report)
 		return true
 	case "/api/history":
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		if !requireMethod(w, r, http.MethodGet) {
 			return true
 		}
 		if h.History == nil {
