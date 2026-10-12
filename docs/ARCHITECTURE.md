@@ -13,7 +13,7 @@ APC UPS Bridge is a single Go application for monitoring one USB APC UPS through
 | `internal/history/` | Bounded 15-minute voltage and load samples, 30-day retention and graph data |
 | `internal/auth/` | Administrator password hashes, sessions, login limits and CSRF |
 | `internal/config/` | Monitoring preferences and atomic file updates |
-| `internal/power/` | Protected-host rules, durable outage state, SSH shutdown and UDP Wake-on-LAN |
+| `internal/power/` | Protected-host rules, durable outage state, SSH shutdown, UDP Wake-on-LAN and display-only device online status (ping / SSH-port connect) |
 | `internal/notify/` | SMTP configuration, durable outage incidents, email delivery and final reports |
 | `internal/firmware/` | Offline, conservative UPS firmware reference comparison |
 | `internal/web/` | Authenticated HTTP handlers, templates and embedded HTML/CSS/JS |

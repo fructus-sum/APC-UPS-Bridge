@@ -37,17 +37,29 @@ Power protection state is stored at `/var/lib/apc-ups-bridge/power-state.json`, 
 
 **Safety:** Test shutdown order, SSH host-key verification, service permissions, abrupt Pi restarts, battery thresholds and WoL on noncritical equipment before relying on automatic protection. Use [installation guidance](INSTALL.md) for service setup and [email documentation](EMAIL-NOTIFICATIONS.md) for the separate full-charge report completion rule.
 
-## Dashboard device availability (read-only)
+## Device online status
 
-The dashboard and saved remote-device cards show friendly names and **Online** or **Offline (SSH unreachable)**. This is an independent, authenticated, read-only TCP probe of each configured SSH port, refreshed every 30 seconds by the browser. It performs **no SSH authentication**, does not test the shutdown command, and cannot wake or shut down a host. An SSH port that is closed, blocked or unreachable may show Offline even when the machine is running; Online means only that the SSH TCP port accepted a connection. It does not claim verified machine power state. The response contains only friendly names, device IDs, status and check timestamps, never SSH credentials.
+The Power page and the dashboard show whether each configured device is online. This status is display-only: it is kept in memory (nothing is written to disk or the event log), is lost on restart, and never drives shutdown or wake decisions. No SSH login is ever made for it.
 
-Saved devices are collapsed on the Power rules page by default, with the friendly name, reachability status and Remove control always visible. Open a device to edit its fields or perform the existing connection-only Test SSH. New devices start expanded, and invalid fields reopen their editor when saving. The web server retains its original unprivileged service identity.
+Each device has an **Online check** setting:
+
+- **Ping** (default): one ICMP echo request per device about once a minute (every 60 seconds plus a few seconds of random jitter; longer when many devices are not answering, because devices are checked one at a time), using an unprivileged ICMP socket that is closed immediately. No SSH or TCP traffic is sent; host names are resolved through the system resolver as usual.
+- **SSH port**: a TCP connect to the device's SSH port that is closed immediately. No login, no session, and no connection is ever held open. Some SSH servers log this as a disconnect before login.
+- **Off**: the device is not checked.
+
+Devices are checked one at a time. An online device is only shown as offline after two consecutive missed checks. After you save the configuration, one extra cycle runs shortly afterwards (at most one extra cycle per 15 seconds).
+
+Ping needs the service's group to be allowed by the kernel. Check with `sysctl net.ipv4.ping_group_range`; current Debian and Raspberry Pi OS releases typically allow all groups. If the range excludes the service group, the device shows as unavailable: choose **SSH port** for it or adjust the sysctl. Hosts that block ping show as offline; choose **SSH port** or **Off** for them.
+
+fail2ban in its default sshd mode does not count connect-only checks, but aggressive modes may, so prefer **Ping**.
+
+The dashboard lists your devices and their status under **Protected devices**, and the Power page shows the same status next to each device name. Saved devices are collapsed on the Power page, with the friendly name, status and Remove control always visible. Open a device to edit its fields or use the connection-only Test SSH. New devices start expanded, and when a save is rejected all devices are opened so the fields can be corrected. The Power page shows **Save to start checking** for a device that has not been saved yet. See **Online check** above for exactly what is checked.
 
 ## Battery health and self-testing
 
-The dashboard's collapsed **System information** details include a **Battery health & maintenance** group. Optional status values from apcaccess are battery voltage (BATTV), nominal battery voltage (NOMBATTV), installation/replacement date (BATTDATE), last self-test (LASTSTEST), self-test result (SELFTEST), and self-test interval (STESTI). Missing values are shown as **Not reported**, not zeros or a false health verdict. The page does not change UPS settings.
+The dashboard's collapsed **System information** details include a **Battery health & maintenance** group. Optional status values from apcaccess are battery voltage (BATTV), nominal battery voltage (NOMBATTV), installation/replacement date (BATTDATE), last self-test (LASTSTEST), self-test result (SELFTEST), and the automatic self-test interval (STESTI). A voltage of 0, an empty value, or a placeholder such as N/A, NA, NONE or NO is shown as **Not reported**, not as a zero or a false health verdict. Self-test results are shown in plain words (Passed, No result yet, Failed (battery capacity too low), Failed (overload), In progress, Warning; other values are shown as reported), and the automatic self-test shows as **Every N hours**, **On** or **Off**. The page does not change UPS settings.
 
-The **Battery self-test instructions** button has an explicit danger warning and requires confirmation to reveal the local command sequence. **It never runs a self-test in the web process.** On supported APC hardware, a host administrator can enter maintenance mode at the machine's console with:
+The **Show manual battery test steps** button has a clear warning and asks for confirmation before showing the local commands. **It never runs a self-test in the web process.** On supported APC hardware, a host administrator can run the test at the machine's console with:
 
 ```sh
 sudo systemctl stop apcupsd
@@ -58,4 +70,4 @@ sudo systemctl start apcupsd
 apcaccess status
 ```
 
-WARNING: An APC self-test can run the protected load from battery, possibly triggering a UPS shutdown on weak or overloaded equipment. Stopping apcupsd temporarily disables native Pi UPS shutdown protection and causes monitoring/automation interruptions. Do not test during an outage or when a battery is weak. Perform under a planned, attended maintenance window and verify the service recovered. Hardware/driver support differs, so absence of a supported self-test action in apctest means it must not be attempted through arbitrary commands. No sudoers, service user or host-settings helper permissions are widened for this feature.
+WARNING: A self-test can run the connected equipment on battery, and could switch it off if the battery is weak. While the UPS service is stopped, monitoring and the automatic Raspberry Pi shutdown are paused. Only do this when someone is present and mains power is normal, and start the service again afterwards. Hardware and driver support differs, so if apctest offers no self-test for your UPS, do not try to force one with other commands. No sudoers, service user or host-settings helper permissions are widened for this feature.

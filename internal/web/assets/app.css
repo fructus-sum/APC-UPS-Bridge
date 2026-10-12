@@ -25,14 +25,10 @@
 .device-details{flex:1 1 260px;min-width:0}
 .device-summary{cursor:pointer;display:flex;align-items:center;gap:12px;flex-wrap:wrap;list-style:revert}
 .device-summary strong{overflow-wrap:anywhere}
-.device-availability{font-size:.8rem;font-weight:600;color:#596d7e}
-.device-availability.reachable{color:#126448}.device-availability.unreachable{color:#97600e}
 .device-top{margin:0;flex:0 0 auto}
+.device-summary .state{font-size:.8rem}
 .device-fields{margin:15px 0}
-.remote-status-list{display:grid;gap:8px;margin-top:12px}
-.remote-status-item{display:flex;justify-content:space-between;gap:12px;align-items:center;border-top:1px solid #e4ebf0;padding:9px 0}
-.remote-status-item strong{overflow-wrap:anywhere}
-.remote-status-item .state{flex-shrink:0}
-@media(max-width:680px){.remote-status-item{align-items:flex-start;flex-wrap:wrap}.device{padding:12px}.device-summary{gap:8px}}
+@media(max-width:680px){.device{padding:12px}.device-summary{gap:8px}}
 
 .battery-health{border-top:1px solid #e4ebf0;margin-top:20px;padding-top:15px}.battery-health h3{margin:0 0 12px}.battery-health #battery-test-instructions{margin-top:12px}
+.device-status-list{list-style:none;margin:0;padding:0}.device-status-list li{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:6px 0}.device-status-list li+li{border-top:1px solid #e3e9ed}

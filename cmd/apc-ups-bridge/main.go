@@ -167,10 +167,13 @@ func run() int {
 		logger.Printf("mail state: %v", err)
 		return 2
 	}
+	statusMonitor := power.NewStatusMonitor(powerController.Config, power.LinuxExecutor{})
+	statusMonitor.Logf = logger.Printf
 	handler, err := web.New(mon, admin, settings, *logDir, powerController)
 	if err == nil {
 		web.AttachEmail(handler, mailEngine)
 		web.AttachHistory(handler, historyStore)
+		web.AttachStatus(handler, statusMonitor)
 	}
 	if err != nil {
 		logger.Print(err)
@@ -200,6 +203,7 @@ func run() int {
 	}()
 	emailUpdates := make(chan notify.Sample, 64)
 	go mailEngine.Run(ctx, emailUpdates, func(err error) { logger.Printf("email report state: %v", err) })
+	go statusMonitor.Run(ctx)
 	lastPollError := false
 	lastPowerError := false
 	lastHistoryError := false

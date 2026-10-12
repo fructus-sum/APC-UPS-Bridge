@@ -27,6 +27,23 @@ type Device struct {
 	ShutdownEnabled bool   `json:"shutdown_enabled"`
 	WakeEnabled     bool   `json:"wake_enabled"`
 	Priority        int    `json:"priority"`
+	// OnlineCheck selects the display-only reachability check: "" or "ping",
+	// "ssh_port" (TCP connect and close, no login) or "off".
+	OnlineCheck string `json:"online_check,omitempty"`
+}
+
+const (
+	OnlineCheckPing    = "ping"
+	OnlineCheckSSHPort = "ssh_port"
+	OnlineCheckOff     = "off"
+)
+
+// OnlineCheckMethod returns the effective check method; unset means ping.
+func (d Device) OnlineCheckMethod() string {
+	if d.OnlineCheck == "" {
+		return OnlineCheckPing
+	}
+	return d.OnlineCheck
 }
 
 type Config struct {
@@ -69,6 +86,11 @@ func (c Config) Validate() error {
 		seen[d.ID] = true
 		if !hostRE.MatchString(d.Host) || strings.Contains(d.Host, "..") || strings.HasSuffix(d.Host, ".") || !userRE.MatchString(d.SSHUser) || d.SSHPort < 1 || d.SSHPort > 65535 {
 			return fmt.Errorf("device %s has invalid host, SSH user or port", d.ID)
+		}
+		switch d.OnlineCheck {
+		case "", OnlineCheckPing, OnlineCheckSSHPort, OnlineCheckOff:
+		default:
+			return fmt.Errorf("device %s has invalid online check method", d.ID)
 		}
 		if d.Priority < 0 || d.Priority > 100 {
 			return fmt.Errorf("device %s has invalid shutdown priority", d.ID)

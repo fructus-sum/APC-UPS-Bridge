@@ -23,6 +23,13 @@ function makeTimeline(root,events) {
   info.append(title,desc);const when=document.createElement('time');when.className='event-time';when.textContent=dateText(e.time);item.append(dot,info,when);root.append(item);
  }
 }
+const selfTestCodes={OK:'Passed',NO:'No result yet',BT:'Failed (battery capacity too low)',NG:'Failed (overload)',IP:'In progress',WN:'Warning'};
+const selfTestResult=code=>code?selfTestCodes[code.toUpperCase()]||code:'Not reported';
+function selfTestInterval(value){
+ if(!value)return 'Not reported';
+ const v=value.toUpperCase();
+ return /^\d+(\.\d+)?$/.test(value)?'Every '+value+' hours':v==='OFF'||v==='NONE'?'Off':v==='ON'?'On':value;
+}
 async function refreshDashboard(){
  try{
   const s=await getJSON('/api/status'); const current=s.current;const badge=el('health');
@@ -33,7 +40,7 @@ async function refreshDashboard(){
   el('load').textContent=numeric(r.load_percent,'%');el('voltage').textContent=numeric(r.input_volts,' V',1);
   el('upsname').textContent=r.name||'Not reported';el('model').textContent=r.model||'Not reported';
   el('power').textContent=current?.status||'Unavailable';el('output').textContent=numeric(r.output_volts,' V',1);
-  for(const [id,value] of [['health-battery-voltage',numeric(r.battery_volts,' V',1)],['health-nominal-voltage',numeric(r.nominal_battery_volts,' V',1)],['health-battery-date',r.battery_date||'Not reported'],['health-last-test',r.last_self_test||'Not reported'],['health-test-result',r.self_test_result||'Not reported'],['health-test-interval',r.self_test_interval||'Not reported']]){const node=el(id);if(node)node.textContent=value;}
+  for(const [id,value] of [['health-battery-voltage',numeric(r.battery_volts,' V',1)],['health-nominal-voltage',numeric(r.nominal_battery_volts,' V',1)],['health-battery-date',r.battery_date||'Not reported'],['health-last-test',r.last_self_test||'Not reported'],['health-test-result',selfTestResult(r.self_test_result)],['health-test-interval',selfTestInterval(r.self_test_interval)]]){const node=el(id);if(node)node.textContent=value;}
   el('checked').textContent=dateText(r.observed_at);el('communication').textContent=s.healthy?'Connected':'Failed · '+(s.error||'Unknown reason');
   const noBat=typeof r.battery_percent!=='number',noRun=typeof r.runtime_minutes!=='number',miss=el('missing-metrics-notice');
   if(miss){miss.hidden=!(s.healthy&&current&&(noBat||noRun));el('missing-metrics-text').textContent='This UPS does not report '+(noBat&&noRun?'battery charge or runtime':noBat?'battery charge':'runtime')+'. '+(noBat&&noRun?"Only the on-battery timer and the UPS's own low-battery signal can trigger the Pi shutdown.":'The '+(noBat?'charge':'runtime')+' limit cannot trigger the Pi shutdown; the other limits, the on-battery timer and the UPS\'s own low-battery signal still can.');}
@@ -44,10 +51,13 @@ async function refreshDashboard(){
 }
 async function refreshFirmware(){
  const installed=el('firmware-installed'),status=el('firmware-status'),id=el('firmware-ups-id');
- const detail=el('firmware-detail'),warning=el('firmware-warning');
- if(!installed||!status||!id||!detail||!warning)return;
+ const detail=el('firmware-detail'),warning=el('firmware-warning'),notice=el('firmware-notice');
+ const full=installed&&status&&id&&detail&&warning;
+ if(!full&&!notice)return;
  try {
   const fw=await getJSON('/api/firmware');
+  if(notice)notice.hidden=fw.status!=='outdated';
+  if(!full)return;
   // A raw installed revision can be reported even when update availability is unknown.
   installed.textContent=fw.installed?.trim()||'Unknown (not reported by UPS)';
   id.textContent=fw.ups_id||'Unknown';
@@ -60,6 +70,8 @@ async function refreshFirmware(){
    el('firmware-versions').textContent='Installed: '+fw.installed+' · Latest referenced: UPS '+fw.latest+' · Reference reviewed: '+fw.reference_date;
   }
  }catch(e){
+  if(notice)notice.hidden=true;
+  if(!full)return;
   installed.textContent='Unknown (unable to check)';
   status.textContent='Unknown';
   id.textContent='Unknown';
@@ -115,33 +127,6 @@ function startHostSettings(){
   }catch(e){feedback.textContent='Unable to apply Pi settings: '+e.message;}
  });
 }
-async function refreshDeviceStatuses(){
- try {
-  const data=await getJSON('/api/power/devices/status');
-  const list=data.devices||[];
-  const dashboard=el('dashboard-remotes');
-  if(dashboard){
-   dashboard.replaceChildren();
-   if(!list.length){const p=document.createElement('p');p.className='muted';p.textContent='No remote devices configured.';dashboard.append(p);}
-   for(const dev of list){
-    const item=document.createElement('div');item.className='remote-status-item';
-    const name=document.createElement('strong');name.textContent=dev.name;
-    const status=document.createElement('span');status.className='state '+(dev.status==='online'?'ok':'error');
-    status.textContent=dev.status==='online'?'Online':'Offline (SSH unreachable)';
-    item.append(name,status);dashboard.append(item);
-   }
-  }
-  for(const section of document.querySelectorAll('#device-list .device')){
-   const id=section.querySelector('[data-key="id"]')?.value;
-   const dev=list.find(d=>d.id===id);
-   const badge=section.querySelector('.device-availability');
-   if(badge){badge.textContent=!dev?'Not yet checked':dev.status==='online'?'Online':'Offline (SSH unreachable)';badge.className='device-availability '+(dev?.status==='online'?'reachable':'unreachable');}
-  }
- }catch(e){
-  if(el('dashboard-remotes'))el('dashboard-remotes').textContent='Remote availability unavailable.';
-  for(const badge of document.querySelectorAll('.device-availability'))badge.textContent='Status unavailable';
- }
-}
 async function refreshPowerState(){
  try {const v=await getJSON('/api/power/state');
  const text=v.enabled ? (v.active ? 'Active: '+v.phase.replaceAll('_',' ') : (v.armed?'Armed · waiting for outage':'Enabled · not yet armed')) : 'Disabled · remote actions off';
@@ -151,10 +136,35 @@ async function refreshPowerState(){
  el('power-summary').textContent=text+(actions.length?' · '+actions.join(' | '):'');}
  }catch(e){if(el('automation-state'))el('automation-state').textContent='Automation status unavailable';}
 }
-function powerField(parent,label,key,value,type='text'){
+const deviceStatus=new Map();
+function statusBadge(s){
+ if(!s||s.state==='unknown')return{cls:'',text:'Not checked yet'};
+ if(s.state==='off')return{cls:'',text:'Check off'};
+ if(s.state==='unavailable')return{cls:'warn',text:'Unavailable: '+(s.message||'status cannot be checked')};
+ if(s.state==='offline')return{cls:'error',text:'● Offline since '+new Date(s.since).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})+(s.message?' · '+s.message:'')};
+ const secs=Math.max(0,Math.round((Date.now()-new Date(s.checked_at))/1000));
+ return{cls:'ok',text:'● Online · checked '+(secs<10?'just now':humanDuration(secs)+' ago')+(typeof s.rtt_ms==='number'?' · '+s.rtt_ms.toFixed(1)+' ms':'')};
+}
+function paintBadge(node,b){node.className='state'+(b.cls?' '+b.cls:'');node.textContent=b.text;}
+function renderDeviceStatus(){
+ const list=el('device-status-list');
+ if(list){const items=Array.from(deviceStatus.values());el('device-status-panel').hidden=!items.length;list.replaceChildren();
+  for(const s of items){const li=document.createElement('li'),name=document.createElement('span'),badge=document.createElement('span');name.textContent=s.name||s.id;paintBadge(badge,statusBadge(s));li.append(name,badge);list.append(li);}}
+ for(const section of document.querySelectorAll('#device-list .device')){
+  const node=section.querySelector('.device-summary .state');if(!node)continue;
+  paintBadge(node,section.dataset.saved?statusBadge(deviceStatus.get(section.querySelector('[data-key="id"]').value)):{cls:'',text:'Save to start checking'});
+ }
+}
+// Reads the bridge's in-memory status only; it never triggers a network check.
+async function refreshDeviceStatus(){
+ try{const v=await getJSON('/api/power/status');deviceStatus.clear();for(const s of v.devices||[])deviceStatus.set(s.id,s);renderDeviceStatus();}
+ catch(e){for(const [id,s] of deviceStatus)deviceStatus.set(id,{id,name:s.name,state:'unavailable',method:s.method,message:'status could not be read from the bridge'});renderDeviceStatus();}
+}
+function powerField(parent,label,key,value,type='text',options){
  const wrapper=document.createElement('label');wrapper.className=type==='checkbox'?'checkline':'device-field';
- const input=document.createElement('input');input.dataset.key=key;input.type=type;
- if(type==='checkbox')input.checked=!!value;else input.value=value??'';
+ const input=document.createElement(type==='select'?'select':'input');input.dataset.key=key;
+ if(type==='select'){for(const [v,t] of options){const o=document.createElement('option');o.value=v;o.textContent=t;input.append(o);}input.value=value;}
+ else{input.type=type;if(type==='checkbox')input.checked=!!value;else input.value=value??'';}
  if(type==='number')input.step=key==='priority'||key.includes('port')?'1':'any';
  if(key==='id'||key==='name'||key==='host'||key==='ssh_user')input.required=true;
  const name=document.createElement('span');name.textContent=label;
@@ -167,12 +177,14 @@ function addDevice(data={}){
  const top=document.createElement('div');top.className='device-top';
  const summary=document.createElement('summary');summary.className='device-summary';
  const title=document.createElement('strong');title.textContent=data.name||'New device';
- const availability=document.createElement('span');availability.className='device-availability';availability.textContent=data.id?'Checking…':'Not saved';
- summary.append(title,availability);details.append(summary);
- const remove=document.createElement('button');remove.type='button';remove.textContent='Remove';remove.className='secondary';remove.addEventListener('click',()=>section.remove());top.append(remove);section.append(details,top);
+ const badgeNode=document.createElement('span');badgeNode.className='state';
+ summary.append(title,badgeNode);details.append(summary);
+ section.dataset.saved=data.id?'1':'';
+ const remove=document.createElement('button');remove.type='button';remove.textContent='Remove';remove.className='secondary';remove.addEventListener('click',()=>{section.remove();renderDeviceStatus();});top.append(remove);section.append(details,top);
  const fields=document.createElement('div');fields.className='device-fields';details.append(fields);
  const spec=[['Device ID','id','text',data.id||'node-'+Math.random().toString(36).slice(2,8)],['Friendly name','name','text',data.name||''],['IP or hostname','host','text',data.host||''],['SSH user','ssh_user','text',data.ssh_user||'root'],['SSH port','ssh_port','number',data.ssh_port??22],['Shutdown priority','priority','number',data.priority??0],['MAC address','mac','text',data.mac||''],['Wake destination IP','wake_address','text',data.wake_address||'255.255.255.255'],['Wake UDP port','wake_port','number',data.wake_port??9],['Use sudo -n','use_sudo','checkbox',data.use_sudo||false],['Allow automatic shutdown','shutdown_enabled','checkbox',data.shutdown_enabled||false],['Allow wake after shutdown','wake_enabled','checkbox',data.wake_enabled||false]];
- for(const [label,key,type,val] of spec)powerField(fields,label,key,val,type);
+ spec.splice(5,0,['Online check','online_check','select',data.online_check||'ping',[['ping','Ping (default)'],['ssh_port','SSH port (connect only, no login)'],['off','Off']]]);
+ for(const [label,key,type,val,options] of spec)powerField(fields,label,key,val,type,options);
  const test=document.createElement('button');test.type='button';test.className='secondary';test.textContent='Test SSH (no shutdown)';
  const status=document.createElement('p');status.className='feedback';status.setAttribute('role','status');
  test.addEventListener('click',async()=>{
@@ -188,7 +200,7 @@ function addDevice(data={}){
  const nameInput=fields.querySelector('[data-key="name"]');
  nameInput.addEventListener('input',()=>{title.textContent=nameInput.value.trim()||'New device';});
  for(const input of fields.querySelectorAll('input'))input.addEventListener('invalid',()=>{details.open=true;});
- root.append(section);
+ root.append(section);renderDeviceStatus();
 }
 function collectDevices(){return Array.from(el('device-list').querySelectorAll('.device')).map(section=>{
  const d={};for(const input of section.querySelectorAll('[data-key]'))d[input.dataset.key]=input.type==='checkbox'?input.checked:input.type==='number'?Number(input.value):input.value.trim();return d;
@@ -233,13 +245,17 @@ async function startPower(){
  if(v.enabled&&!window.confirm('Enable automated SSH shutdown for approved devices when the UPS crosses the configured threshold?')){feedback.textContent='Not saved.';return;}
  try{const res=await fetch('/api/power',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},credentials:'same-origin',body:JSON.stringify(v)});
  if(!res.ok)throw new Error((await res.text()).trim());feedback.textContent='Power configuration saved.';
- for(const section of el('device-list').querySelectorAll('.device'))section.querySelector('details.device-details').open=false;
- refreshPowerState();refreshDeviceStatuses();
- }catch(e){feedback.textContent='Could not save: '+e.message;}
+ for(const s of el('device-list').querySelectorAll('.device')){s.dataset.saved='1';s.querySelector('details.device-details').open=false;}
+ refreshPowerState();refreshDeviceStatus();
+ }catch(e){
+  feedback.textContent='Could not save: '+e.message;
+  for(const d of el('device-list').querySelectorAll('details.device-details'))d.open=true;
+ }
  });
- refreshPowerState();refreshDeviceStatuses();setInterval(refreshPowerState,10000);setInterval(refreshDeviceStatuses,30000);
+ refreshPowerState();setInterval(refreshPowerState,10000);
+ refreshDeviceStatus();setInterval(refreshDeviceStatus,10000);
 }
-if(page==='/'){const guide=el('battery-test-guide');if(guide)guide.addEventListener('click',()=>{const panel=el('battery-test-instructions');if(!panel.hidden){panel.hidden=true;return;}if(window.confirm('WARNING: Self-testing may run equipment on battery power and requires stopping apcupsd, temporarily suspending UPS monitoring and power protection. Only proceed to instructions for a planned maintenance window. Continue?'))panel.hidden=false;});refreshDashboard();refreshRecent();refreshPowerState();refreshDeviceStatuses();setInterval(refreshDashboard,10000);setInterval(refreshRecent,60000);setInterval(refreshPowerState,10000);setInterval(refreshDeviceStatuses,30000);}
+if(page==='/'){const guide=el('battery-test-guide');if(guide)guide.addEventListener('click',()=>{const panel=el('battery-test-instructions');if(!panel.hidden){panel.hidden=true;return;}if(window.confirm('This test can run your connected equipment on battery power and could switch it off if the battery is weak. While the UPS service is stopped, monitoring and automatic Pi shutdown are paused. Only continue if someone is present and the mains power is normal. Show the steps?'))panel.hidden=false;});refreshDashboard();refreshFirmware();refreshRecent();refreshPowerState();setInterval(refreshDashboard,10000);setInterval(refreshFirmware,60000);setInterval(refreshRecent,60000);setInterval(refreshPowerState,10000);refreshDeviceStatus();setInterval(refreshDeviceStatus,10000);}
 if(page==='/events'){refreshEvents();el('range').addEventListener('change',refreshEvents);el('refresh-events').addEventListener('click',refreshEvents);}
 if(page==='/settings'){startSettings();startHostSettings();refreshFirmware();setInterval(refreshFirmware,60000);}
 
