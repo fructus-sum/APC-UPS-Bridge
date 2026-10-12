@@ -178,8 +178,9 @@ func (m *Monitor) Poll(ctx context.Context) error {
 		if *snap.BatteryPercent < 100 {
 			m.chargeBelowFull = true
 		} else if m.chargeBelowFull {
-			record("battery_fully_charged", "info", metricDetails(snap))
-			m.chargeBelowFull = false
+			if record("battery_fully_charged", "info", metricDetails(snap)) {
+				m.chargeBelowFull = false
+			}
 		}
 	}
 	m.prior = snap.Power
