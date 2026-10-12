@@ -12,6 +12,10 @@ import (
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/events"
 )
 
+// fullChargeArmPercent is the charge at or below which a later return to 100%
+// counts as a recharge worth reporting.
+const fullChargeArmPercent = 95
+
 // Status is safe to return to future dashboards. A failed poll is not reported
 // as a healthy, fresh reading; LastGood remains explicitly marked as historic.
 type Status struct {
@@ -23,20 +27,20 @@ type Status struct {
 }
 
 type Monitor struct {
-	mu       sync.RWMutex
-	reader   apc.Reader
-	writer   events.Writer
-	lowAt    float64
-	status   Status
-	prior    apc.PowerState
-	hasPrior bool
-	bad      bool
-	gap      bool
-	low      bool
+	mu              sync.RWMutex
+	reader          apc.Reader
+	writer          events.Writer
+	lowAt           float64
+	status          Status
+	prior           apc.PowerState
+	hasPrior        bool
+	bad             bool
+	gap             bool
+	low             bool
 	chargeBelowFull bool
-	outageAt time.Time
-	lowest   *float64
-	now      func() time.Time
+	outageAt        time.Time
+	lowest          *float64
+	now             func() time.Time
 }
 
 func New(reader apc.Reader, writer events.Writer, lowBatteryThreshold float64) (*Monitor, error) {
@@ -115,6 +119,7 @@ func (m *Monitor) Poll(ctx context.Context) error {
 		m.status.Current = nil
 		m.status.Error = readErr.Error()
 		m.gap = true
+		m.chargeBelowFull = false
 		if !m.bad {
 			// Stay unmarked if the write fails so the event is retried next poll.
 			m.bad = record("ups_communication_lost", "warning", map[string]any{"reason": readErr.Error()})
@@ -172,12 +177,13 @@ func (m *Monitor) Poll(ctx context.Context) error {
 		m.low = false
 	}
 	// Record the first observed return to full charge after observing a
-	// reading below full. We do not infer the transition across restarts or
-	// an unobserved communication gap.
+	// charge of 95% or lower. The 95% threshold stops a reading that flickers
+	// between 99% and 100% from repeating the event. We do not infer the
+	// transition across restarts or an unobserved communication gap.
 	if snap.BatteryPercent != nil {
-		if *snap.BatteryPercent < 100 {
+		if *snap.BatteryPercent <= fullChargeArmPercent {
 			m.chargeBelowFull = true
-		} else if m.chargeBelowFull {
+		} else if *snap.BatteryPercent >= 100 && m.chargeBelowFull {
 			if record("battery_fully_charged", "info", metricDetails(snap)) {
 				m.chargeBelowFull = false
 			}

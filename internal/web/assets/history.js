@@ -78,24 +78,25 @@ function drawBattery(report){
  }
  if(path)chart.append(svg('path',{d:path,fill:'none',stroke:'#4775bb','stroke-width':2,'stroke-dasharray':'5 4'}));
  const runtimeValues=report.points.map(p=>p.runtime_minutes).concat((report.events||[]).map(e=>e.details&&e.details.runtime_minutes)).filter(v=>typeof v==='number'&&Number.isFinite(v)&&v>=0&&v<=100000);
+ const runtimeMax=runtimeValues.length?Math.max(10,Math.ceil(Math.max(...runtimeValues)/10)*10):0;
  if(runtimeValues.length){
-  const max=Math.max(10,Math.ceil(Math.max(...runtimeValues)/10)*10);
   let d='',continuous=false;
   for(const p of report.points){
    const v=p.runtime_minutes;
    if(typeof v!=='number'||!Number.isFinite(v)||!p.observed||p.runtime_from_event){continuous=false;continue;}
-   const xp=x(p.time).toFixed(2),yp=(T+h-v/max*h).toFixed(2);
+   const xp=x(p.time).toFixed(2),yp=(T+h-v/runtimeMax*h).toFixed(2);
    d+=(continuous?'L':'M')+xp+' '+yp+' ';continuous=true;
   }
   if(d)chart.append(svg('path',{d,fill:'none',stroke:'#aa6bba','stroke-width':2}));
   for(let i=0;i<=4;i++){
    const label=svg('text',{x:W-1,y:y(i*25)+4,'text-anchor':'end',fill:'#8c5b96','font-size':11});
-   label.textContent=Math.round(max*i/4)+' min';chart.append(label);
+   label.textContent=Math.round(runtimeMax*i/4)+' min';chart.append(label);
   }
  }
  // The actual time of an event is more precise than its fifteen-minute
  // sample bucket. Draw an isolated dot at that recorded timestamp even when
  // another sample occupies the same bucket.
+ let eventDots=0;
  for(const event of report.events||[]){
   const t=new Date(event.time).getTime();
   if(!Number.isFinite(t)||t<from||t>to)continue;
@@ -103,16 +104,16 @@ function drawBattery(report){
   const b=details.battery_percent;
   if(typeof b==='number'&&Number.isFinite(b)&&b>=0&&b<=100){
    const dot=svg('circle',{cx:x(event.time),cy:y(b),r:event.type==='battery_fully_charged'?5:3.5,fill:'#24986b',stroke:'#fff','stroke-width':1});
-   const tip=svg('title');tip.textContent=event.type+' · Battery '+b+'%';dot.append(tip);chart.append(dot);
+   const tip=svg('title');tip.textContent=event.type+' · Battery '+b+'%';dot.append(tip);chart.append(dot);eventDots++;
   }
   const runtime=details.runtime_minutes;
   if(typeof runtime==='number'&&Number.isFinite(runtime)&&runtime>=0&&runtime<=100000&&runtimeValues.length){
-   const max=Math.max(10,Math.ceil(Math.max(...runtimeValues)/10)*10);
-   const dot=svg('circle',{cx:x(event.time),cy:T+h-runtime/max*h,r:3,fill:'#aa6bba'});
-   const tip=svg('title');tip.textContent=event.type+' · Runtime '+runtime+' minutes';dot.append(tip);chart.append(dot);
+   const dot=svg('circle',{cx:x(event.time),cy:T+h-runtime/runtimeMax*h,r:3,fill:'#aa6bba'});
+   const tip=svg('title');tip.textContent=event.type+' · Runtime '+runtime+' minutes';dot.append(tip);chart.append(dot);eventDots++;
   }
  }
-
+ // Recorded event points are real measurements, so the graph is not empty.
+ if(eventDots){const empty=root.querySelector('.history-empty');if(empty)empty.remove();}
 }
 function summary(report){
  const points=report.points||[],measured=points.filter(p=>p.observed).length;

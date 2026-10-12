@@ -51,22 +51,43 @@ func TestHistoryPageAndAPIProtected(t *testing.T) {
 }
 
 func TestBatteryHistoryIndependentRanges(t *testing.T) {
- h,a:=setupWeb(t)
- AttachHistory(h,history.New(filepath.Join(t.TempDir(),"history")))
- token,_,err:=a.Login("127.0.0.1","admin","long secret passphrase");if err!=nil{t.Fatal(err)}
- cookie:=&http.Cookie{Name:"ups_bridge_session",Value:token}
- for _,days:=range []string{"","30","90","180","365"}{
-  suffix:="";if days!=""{suffix="?days="+days}
-  w:=request(h,"GET","/api/history/battery"+suffix,"",cookie,"")
-  if w.Code!=200{t.Fatalf("battery range %q HTTP %d: %s",days,w.Code,w.Body.String())}
-  var out history.Result;if err:=json.Unmarshal(w.Body.Bytes(),&out);err!=nil{t.Fatal(err)}
-  if out.Samples!=0 || len(out.Points)!=30*24*4+1{t.Fatalf("unexpected sparse result %+v",out)}
-  if days=="" || days=="30"{if out.To.Sub(out.From)!=30*24*time.Hour{t.Fatal("wrong default")}}
- }
- for _,days:=range []string{"31","14","366","abc","-1"}{
-  w:=request(h,"GET","/api/history/battery?days="+days,"",cookie,"")
-  if w.Code!=400{t.Fatalf("invalid %s accepted %d",days,w.Code)}
- }
- w:=request(h,"GET","/history","",cookie,"")
- if !strings.Contains(w.Body.String(),`id="battery-history-days"`) || !strings.Contains(w.Body.String(),`value="365"`){t.Fatal("battery-only range selector missing")}
+	h, a := setupWeb(t)
+	AttachHistory(h, history.New(filepath.Join(t.TempDir(), "history")))
+	token, _, err := a.Login("127.0.0.1", "admin", "long secret passphrase")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := &http.Cookie{Name: "ups_bridge_session", Value: token}
+	for _, days := range []string{"", "30", "90", "180", "365"} {
+		suffix := ""
+		if days != "" {
+			suffix = "?days=" + days
+		}
+		w := request(h, "GET", "/api/history/battery"+suffix, "", cookie, "")
+		if w.Code != 200 {
+			t.Fatalf("battery range %q HTTP %d: %s", days, w.Code, w.Body.String())
+		}
+		var out history.Result
+		if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		if out.Samples != 0 || len(out.Points) != 30*24*4+1 {
+			t.Fatalf("unexpected sparse result %+v", out)
+		}
+		if days == "" || days == "30" {
+			if span := out.To.Sub(out.From); span < 30*24*time.Hour || span >= 30*24*time.Hour+history.Interval {
+				t.Fatal("wrong default")
+			}
+		}
+	}
+	for _, days := range []string{"31", "14", "366", "abc", "-1"} {
+		w := request(h, "GET", "/api/history/battery?days="+days, "", cookie, "")
+		if w.Code != 400 {
+			t.Fatalf("invalid %s accepted %d", days, w.Code)
+		}
+	}
+	w := request(h, "GET", "/history", "", cookie, "")
+	if !strings.Contains(w.Body.String(), `id="battery-history-days"`) || !strings.Contains(w.Body.String(), `value="365"`) {
+		t.Fatal("battery-only range selector missing")
+	}
 }

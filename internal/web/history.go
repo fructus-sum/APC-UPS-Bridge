@@ -31,16 +31,34 @@ func (h *Handler) historyRoutes(w http.ResponseWriter, r *http.Request) bool {
 		_, _ = w.Write(b)
 		return true
 	case "/api/history/battery":
-		if r.Method != http.MethodGet { http.Error(w, "method not allowed", http.StatusMethodNotAllowed); return true }
-		if h.History == nil { http.Error(w,"history unavailable",http.StatusServiceUnavailable); return true }
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return true
+		}
+		if h.History == nil {
+			http.Error(w, "history unavailable", http.StatusServiceUnavailable)
+			return true
+		}
 		days := history.DefaultBatteryDays
 		if raw := r.URL.Query().Get("days"); raw != "" {
-			n,err := strconv.Atoi(raw); if err != nil {http.Error(w,"invalid range",http.StatusBadRequest);return true}; days=n
+			n, err := strconv.Atoi(raw)
+			if err != nil {
+				http.Error(w, "invalid range", http.StatusBadRequest)
+				return true
+			}
+			days = n
 		}
-		if days != 30 && days != 90 && days != 180 && days != 365 { http.Error(w,"invalid range",http.StatusBadRequest);return true }
-		report,err := h.History.ReadBattery(days,time.Now(),h.Logs)
-		if err != nil {http.Error(w,"battery history unavailable",http.StatusInternalServerError);return true}
-		respondJSON(w,report);return true
+		if days != 30 && days != 90 && days != 180 && days != 365 {
+			http.Error(w, "invalid range", http.StatusBadRequest)
+			return true
+		}
+		report, err := h.History.ReadBattery(days, time.Now(), h.Logs)
+		if err != nil {
+			http.Error(w, "battery history unavailable", http.StatusInternalServerError)
+			return true
+		}
+		respondJSON(w, report)
+		return true
 	case "/api/history":
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
