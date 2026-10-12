@@ -33,6 +33,7 @@ async function refreshDashboard(){
   el('load').textContent=numeric(r.load_percent,'%');el('voltage').textContent=numeric(r.input_volts,' V',1);
   el('upsname').textContent=r.name||'Not reported';el('model').textContent=r.model||'Not reported';
   el('power').textContent=current?.status||'Unavailable';el('output').textContent=numeric(r.output_volts,' V',1);
+  for(const [id,value] of [['health-battery-voltage',numeric(r.battery_volts,' V',1)],['health-nominal-voltage',numeric(r.nominal_battery_volts,' V',1)],['health-battery-date',r.battery_date||'Not reported'],['health-last-test',r.last_self_test||'Not reported'],['health-test-result',r.self_test_result||'Not reported'],['health-test-interval',r.self_test_interval||'Not reported']]){const node=el(id);if(node)node.textContent=value;}
   el('checked').textContent=dateText(r.observed_at);el('communication').textContent=s.healthy?'Connected':'Failed · '+(s.error||'Unknown reason');
   const noBat=typeof r.battery_percent!=='number',noRun=typeof r.runtime_minutes!=='number',miss=el('missing-metrics-notice');
   if(miss){miss.hidden=!(s.healthy&&current&&(noBat||noRun));el('missing-metrics-text').textContent='This UPS does not report '+(noBat&&noRun?'battery charge or runtime':noBat?'battery charge':'runtime')+'. '+(noBat&&noRun?"Only the on-battery timer and the UPS's own low-battery signal can trigger the Pi shutdown.":'The '+(noBat?'charge':'runtime')+' limit cannot trigger the Pi shutdown; the other limits, the on-battery timer and the UPS\'s own low-battery signal still can.');}
@@ -238,7 +239,7 @@ async function startPower(){
  });
  refreshPowerState();refreshDeviceStatuses();setInterval(refreshPowerState,10000);setInterval(refreshDeviceStatuses,30000);
 }
-if(page==='/'){refreshDashboard();refreshRecent();refreshPowerState();refreshDeviceStatuses();setInterval(refreshDashboard,10000);setInterval(refreshRecent,60000);setInterval(refreshPowerState,10000);setInterval(refreshDeviceStatuses,30000);}
+if(page==='/'){const guide=el('battery-test-guide');if(guide)guide.addEventListener('click',()=>{const panel=el('battery-test-instructions');if(!panel.hidden){panel.hidden=true;return;}if(window.confirm('WARNING: Self-testing may run equipment on battery power and requires stopping apcupsd, temporarily suspending UPS monitoring and power protection. Only proceed to instructions for a planned maintenance window. Continue?'))panel.hidden=false;});refreshDashboard();refreshRecent();refreshPowerState();refreshDeviceStatuses();setInterval(refreshDashboard,10000);setInterval(refreshRecent,60000);setInterval(refreshPowerState,10000);setInterval(refreshDeviceStatuses,30000);}
 if(page==='/events'){refreshEvents();el('range').addEventListener('change',refreshEvents);el('refresh-events').addEventListener('click',refreshEvents);}
 if(page==='/settings'){startSettings();startHostSettings();refreshFirmware();setInterval(refreshFirmware,60000);}
 
