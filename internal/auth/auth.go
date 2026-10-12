@@ -23,7 +23,22 @@ const iterations = 240000
 const sessionLifetime = 8 * time.Hour
 
 var ErrCredentials = errors.New("invalid credentials")
-var ErrSuspicious = errors.New("suspected attack after five failed logins")
+
+// These match the Fail2ban jail (maxretry=5, findtime=10m in
+// scripts/setup-fail2ban.sh); change them together.
+const (
+	suspiciousFailures = 5
+	attemptWindow      = 10 * time.Minute
+)
+
+type suspiciousError struct{}
+
+func (suspiciousError) Error() string { return "suspected attack after five failed logins" }
+
+// Unwrap lets callers treat the fifth failure as an ordinary credential failure.
+func (suspiciousError) Unwrap() error { return ErrCredentials }
+
+var ErrSuspicious error = suspiciousError{}
 
 type record struct {
 	Scheme     string `json:"scheme"`
@@ -158,7 +173,7 @@ func (s *Store) Login(ip, username, password string) (token, csrf string, err er
 		}
 	}
 	a := s.attempts[ip]
-	if now.Sub(a.since) > 10*time.Minute {
+	if now.Sub(a.since) > attemptWindow {
 		a = attempt{since: now}
 	}
 	if a.count >= 6 {
@@ -167,7 +182,7 @@ func (s *Store) Login(ip, username, password string) (token, csrf string, err er
 	if username != "admin" || !verify(s.password, password) {
 		a.count++
 		s.attempts[ip] = a
-		if a.count == 5 {
+		if a.count == suspiciousFailures {
 			return "", "", ErrSuspicious
 		}
 		return "", "", ErrCredentials
@@ -194,7 +209,7 @@ func (s *Store) prune(now time.Time) {
 		}
 	}
 	for k, v := range s.attempts {
-		if now.Sub(v.since) > 10*time.Minute {
+		if now.Sub(v.since) > attemptWindow {
 			delete(s.attempts, k)
 		}
 	}

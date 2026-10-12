@@ -379,7 +379,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	}
 	token, _, err := h.Auth.Login(addr, r.PostFormValue("username"), r.PostFormValue("password"))
 	if err != nil {
-		if ip := net.ParseIP(addr); ip != nil && (errors.Is(err, auth.ErrCredentials) || errors.Is(err, auth.ErrSuspicious)) {
+		if ip := net.ParseIP(addr); ip != nil && errors.Is(err, auth.ErrCredentials) {
 			log.Printf(authFailureLogFormat, ip.String())
 		}
 		if errors.Is(err, auth.ErrSuspicious) && h.Mail != nil { go h.Mail.SendSecurityWarning() }

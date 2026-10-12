@@ -2,7 +2,6 @@ package web
 
 import (
 	"bufio"
-	"encoding/json"
 	"net"
 	"net/http"
 	"os"
@@ -24,6 +23,11 @@ type securityEvent struct {
 	IP     string `json:"ip"`
 }
 
+type securityResponse struct {
+	Events  []securityEvent `json:"events"`
+	Message string          `json:"message"`
+}
+
 func (h *Handler) securityRoutes(w http.ResponseWriter, r *http.Request) bool {
 	if r.URL.Path != "/api/security/fail2ban" {
 		return false
@@ -35,10 +39,7 @@ func (h *Handler) securityRoutes(w http.ResponseWriter, r *http.Request) bool {
 	f, err := os.Open(fail2banLogPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			respondJSON(w, struct {
-				Events  []securityEvent `json:"events"`
-				Message string          `json:"message"`
-			}{[]securityEvent{}, "Fail2ban event log is not available. Check the installation and service."})
+			respondJSON(w, securityResponse{[]securityEvent{}, "Fail2ban event log is not available. Check the installation and service."})
 		} else {
 			http.Error(w, "Security event log unavailable", http.StatusServiceUnavailable)
 		}
@@ -78,10 +79,6 @@ func (h *Handler) securityRoutes(w http.ResponseWriter, r *http.Request) bool {
 	for i, j := 0, len(recent)-1; i < j; i, j = i+1, j-1 {
 		recent[i], recent[j] = recent[j], recent[i]
 	}
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	_ = json.NewEncoder(w).Encode(struct {
-		Events  []securityEvent `json:"events"`
-		Message string          `json:"message"`
-	}{recent, "Read-only Fail2ban actions for the APC UPS Bridge jail."})
+	respondJSON(w, securityResponse{recent, "Read-only Fail2ban actions for the APC UPS Bridge jail."})
 	return true
 }
