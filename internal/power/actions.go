@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"regexp"
 	"strconv"
-	"syscall"
 	"time"
 )
 
@@ -115,7 +114,7 @@ func (e LinuxExecutor) Wake(ctx context.Context, d Device) error {
 	}
 	var sockerr error
 	if err = raw.Control(func(fd uintptr) {
-		sockerr = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_BROADCAST, 1)
+		sockerr = enableBroadcast(fd)
 	}); err != nil {
 		return err
 	}

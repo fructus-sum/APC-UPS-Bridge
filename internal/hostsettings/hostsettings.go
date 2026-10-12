@@ -12,7 +12,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -183,11 +182,9 @@ func atomicReplace(path string, data []byte, original os.FileInfo) error {
 		f.Close()
 		return err
 	}
-	if sys, ok := original.Sys().(*syscall.Stat_t); ok {
-		if err := f.Chown(int(sys.Uid), int(sys.Gid)); err != nil {
-			f.Close()
-			return err
-		}
+	if err := copyOwner(f, original); err != nil {
+		f.Close()
+		return err
 	}
 	if _, err := f.Write(data); err != nil {
 		f.Close()
