@@ -21,5 +21,7 @@ jobs:
         run: go test -race ./...
       - name: Vet
         run: go vet ./...
+      - name: Dashboard and history JavaScript syntax
+        run: node --check internal/web/assets/app.js && node --check internal/web/assets/history.js
       - name: Installer checks
         run: bash -n scripts/*.sh tools/*.sh && bash scripts/test-install.sh

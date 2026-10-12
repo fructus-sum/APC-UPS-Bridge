@@ -40,6 +40,7 @@ type Handler struct {
 	Power   *power.Controller
 	Mail    *notify.Engine
 	History *history.Store
+	Status  *power.StatusMonitor
 }
 type viewData struct {
 	Page    string
@@ -85,6 +86,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.emailRoutes(w, r, csrf) {
+		return
+	}
+	if h.statusRoutes(w, r) {
 		return
 	}
 	switch r.URL.Path {
@@ -221,6 +225,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if err := h.Power.UpdateConfig(value); err != nil {
 			http.Error(w, err.Error(), 400)
 			return
+		}
+		if h.Status != nil {
+			h.Status.Nudge()
 		}
 		respondJSON(w, h.PowerConfig())
 	case "/api/power/host-settings":

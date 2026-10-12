@@ -38,6 +38,14 @@ type Snapshot struct {
 	LoadPercent    *float64   `json:"load_percent,omitempty"`
 	InputVolts     *float64   `json:"input_volts,omitempty"`
 	OutputVolts    *float64   `json:"output_volts,omitempty"`
+	// Optional battery maintenance metadata from apcaccess status.
+	// These fields are read-only; older APC models may omit all of them.
+	BatteryVolts        *float64 `json:"battery_volts,omitempty"`
+	NominalBatteryVolts *float64 `json:"nominal_battery_volts,omitempty"`
+	BatteryDate         string   `json:"battery_date,omitempty"`
+	LastSelfTest        string   `json:"last_self_test,omitempty"`
+	SelfTestResult      string   `json:"self_test_result,omitempty"`
+	SelfTestInterval    string   `json:"self_test_interval,omitempty"`
 }
 
 // Parse accepts any apcaccess output containing a STATUS line. Unknown metrics
@@ -70,11 +78,17 @@ func Parse(data []byte, now time.Time) (Snapshot, error) {
 		ObservedAt: now.UTC(), Name: fields["UPSNAME"], Model: fields["MODEL"],
 		Status: status, Flags: flags, Power: powerFromFlags(flags),
 		SKU: fields["SKU"], Firmware: fields["FIRMWARE"],
-		BatteryPercent: metric(fields["BCHARGE"], true),
-		RuntimeMinutes: metric(fields["TIMELEFT"], false),
-		LoadPercent:    metric(fields["LOADPCT"], false),
-		InputVolts:     metric(fields["LINEV"], false),
-		OutputVolts:    metric(fields["OUTPUTV"], false),
+		BatteryPercent:      metric(fields["BCHARGE"], true),
+		RuntimeMinutes:      metric(fields["TIMELEFT"], false),
+		LoadPercent:         metric(fields["LOADPCT"], false),
+		InputVolts:          metric(fields["LINEV"], false),
+		OutputVolts:         metric(fields["OUTPUTV"], false),
+		BatteryVolts:        positive(metric(fields["BATTV"], false)),
+		NominalBatteryVolts: positive(metric(fields["NOMBATTV"], false)),
+		BatteryDate:         reported(fields["BATTDATE"]),
+		LastSelfTest:        reported(fields["LASTSTEST"]),
+		SelfTestResult:      fields["SELFTEST"],
+		SelfTestInterval:    fields["STESTI"],
 	}
 	return snap, nil
 }
@@ -151,4 +165,22 @@ func (r CommandReader) Read(ctx context.Context) (Snapshot, error) {
 		return Snapshot{}, fmt.Errorf("apcaccess parse: %w", err)
 	}
 	return snap, nil
+}
+
+// positive treats a zero reading as not reported, as some UPS models do for
+// readings they do not support.
+func positive(v *float64) *float64 {
+	if v == nil || *v <= 0 {
+		return nil
+	}
+	return v
+}
+
+// reported returns "" for the placeholders apcupsd prints when a value is unknown.
+func reported(value string) string {
+	switch strings.ToUpper(value) {
+	case "", "N/A", "NA", "NONE", "NO":
+		return ""
+	}
+	return value
 }

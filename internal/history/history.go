@@ -25,19 +25,33 @@ const Retention = 30 * 24 * time.Hour
 const MaxDays = 30
 const DefaultDays = 14
 
+// Upper bounds of accepted readings; the lower bound is always 0.
+const (
+	maxPercent        = 100 // battery charge and load
+	maxRuntimeMinutes = 100000
+)
+
 type Sample struct {
-	Time        time.Time `json:"time"`
-	InputVolts  *float64  `json:"input_volts"`
-	OutputVolts *float64  `json:"output_volts"`
-	LoadPercent *float64  `json:"load_percent"`
+	Time           time.Time      `json:"time"`
+	InputVolts     *float64       `json:"input_volts"`
+	OutputVolts    *float64       `json:"output_volts"`
+	LoadPercent    *float64       `json:"load_percent"`
+	BatteryPercent *float64       `json:"battery_percent,omitempty"`
+	RuntimeMinutes *float64       `json:"runtime_minutes,omitempty"`
+	Power          apc.PowerState `json:"power,omitempty"`
 }
 
 type Bucket struct {
-	Time        time.Time `json:"time"`
-	InputVolts  *float64  `json:"input_volts"`
-	OutputVolts *float64  `json:"output_volts"`
-	LoadPercent *float64  `json:"load_percent"`
-	Observed    bool      `json:"observed"`
+	Time             time.Time      `json:"time"`
+	InputVolts       *float64       `json:"input_volts"`
+	OutputVolts      *float64       `json:"output_volts"`
+	LoadPercent      *float64       `json:"load_percent"`
+	Observed         bool           `json:"observed"`
+	BatteryPercent   *float64       `json:"battery_percent,omitempty"`
+	RuntimeMinutes   *float64       `json:"runtime_minutes,omitempty"`
+	Power            apc.PowerState `json:"power,omitempty"`
+	BatteryFromEvent bool           `json:"battery_from_event,omitempty"`
+	RuntimeFromEvent bool           `json:"runtime_from_event,omitempty"`
 }
 
 type Result struct {
@@ -81,10 +95,14 @@ func (s *Store) Record(snap *apc.Snapshot) error {
 	if now.After(time.Now().UTC().Add(5 * time.Minute)) {
 		return fmt.Errorf("observation in future")
 	}
-	if !valid(snap.InputVolts, 0, 1000) || !valid(snap.OutputVolts, 0, 1000) || !valid(snap.LoadPercent, 0, 100) {
+	if !valid(snap.InputVolts, 0, 1000) || !valid(snap.OutputVolts, 0, 1000) || !valid(snap.LoadPercent, 0, maxPercent) {
 		return fmt.Errorf("invalid UPS sample")
 	}
-	if snap.InputVolts == nil && snap.OutputVolts == nil && snap.LoadPercent == nil {
+	// A bad battery or runtime value only drops that field; it must not
+	// discard the voltage and load readings taken at the same time.
+	battery := validOrNil(snap.BatteryPercent, 0, maxPercent)
+	runtime := validOrNil(snap.RuntimeMinutes, 0, maxRuntimeMinutes)
+	if snap.InputVolts == nil && snap.OutputVolts == nil && snap.LoadPercent == nil && battery == nil && runtime == nil {
 		return nil
 	}
 	bucket := now.Truncate(Interval)
@@ -104,7 +122,7 @@ func (s *Store) Record(snap *apc.Snapshot) error {
 		s.lastBucket = bucket
 		return nil
 	}
-	rec := Sample{Time: now, InputVolts: clone(snap.InputVolts), OutputVolts: clone(snap.OutputVolts), LoadPercent: clone(snap.LoadPercent)}
+	rec := Sample{Time: now, InputVolts: clone(snap.InputVolts), OutputVolts: clone(snap.OutputVolts), LoadPercent: clone(snap.LoadPercent), BatteryPercent: clone(battery), RuntimeMinutes: clone(runtime), Power: snap.Power}
 	b, err := json.Marshal(rec)
 	if err != nil {
 		return err
@@ -136,6 +154,14 @@ func (s *Store) Record(snap *apc.Snapshot) error {
 }
 func valid(p *float64, min, max float64) bool {
 	return p == nil || (!math.IsNaN(*p) && !math.IsInf(*p, 0) && *p >= min && *p <= max)
+}
+
+// validOrNil returns p when it is absent or within range, otherwise nil.
+func validOrNil(p *float64, min, max float64) *float64 {
+	if valid(p, min, max) {
+		return p
+	}
+	return nil
 }
 func clone(p *float64) *float64 {
 	if p == nil {
@@ -263,9 +289,11 @@ func (s *Store) Read(days int, now time.Time, eventDir string) (Result, error) {
 	for _, name := range files {
 		err := eachLine(filepath.Join(s.Dir, name), func(b []byte) {
 			var v Sample
-			if json.Unmarshal(b, &v) != nil || v.Time.IsZero() || !valid(v.InputVolts, 0, 1000) || !valid(v.OutputVolts, 0, 1000) || !valid(v.LoadPercent, 0, 100) {
+			if json.Unmarshal(b, &v) != nil || v.Time.IsZero() || !valid(v.InputVolts, 0, 1000) || !valid(v.OutputVolts, 0, 1000) || !valid(v.LoadPercent, 0, maxPercent) {
 				return
 			}
+			v.BatteryPercent = validOrNil(v.BatteryPercent, 0, maxPercent)
+			v.RuntimeMinutes = validOrNil(v.RuntimeMinutes, 0, maxRuntimeMinutes)
 			slot := v.Time.UTC().Truncate(Interval)
 			if slot.Before(start) || slot.After(end) {
 				return
@@ -278,6 +306,9 @@ func (s *Store) Read(days int, now time.Time, eventDir string) (Result, error) {
 			result.Points[idx].InputVolts = v.InputVolts
 			result.Points[idx].OutputVolts = v.OutputVolts
 			result.Points[idx].LoadPercent = v.LoadPercent
+			result.Points[idx].BatteryPercent = v.BatteryPercent
+			result.Points[idx].RuntimeMinutes = v.RuntimeMinutes
+			result.Points[idx].Power = v.Power
 			result.Points[idx].Observed = true
 			result.Samples++
 		})
@@ -286,20 +317,102 @@ func (s *Store) Read(days int, now time.Time, eventDir string) (Result, error) {
 		}
 	}
 	if eventDir != "" {
-		hist, err := events.ReadHistory(eventDir, days, 500, now)
+		hist, err := events.ReadPowerTimeline(eventDir, start, now)
 		if err != nil {
 			return Result{}, err
 		}
-		for i := len(hist.Events) - 1; i >= 0; i-- {
-			ev := hist.Events[i]
-			if ev.Time.Before(start) || ev.Time.After(now) {
-				continue
+		result.Events = hist
+		backfillFromEvents(result.Points, start, hist)
+	}
+	return result, nil
+}
+
+// backfillFromEvents copies battery/runtime readings recorded in events into
+// the grid slot of the event. Event measurements are genuine readings taken at
+// the transition. Only otherwise missing fields are filled; readings and power
+// state are never interpolated. Events outside the grid are ignored.
+func backfillFromEvents(points []Bucket, gridStart time.Time, evs []events.Event) {
+	for _, ev := range evs {
+		if ev.Time.Before(gridStart) {
+			continue
+		}
+		idx := int(ev.Time.UTC().Truncate(Interval).Sub(gridStart) / Interval)
+		if idx < 0 || idx >= len(points) {
+			continue
+		}
+		p := &points[idx]
+		if p.BatteryPercent == nil {
+			if n, ok := eventNumber(ev.Details, "battery_percent", 0, maxPercent); ok {
+				p.BatteryPercent = &n
+				p.BatteryFromEvent = true
 			}
-			switch ev.Type {
-			case "power_lost", "power_restored", "on_battery_detected", "ups_communication_lost", "ups_communication_restored":
-				result.Events = append(result.Events, ev)
+		}
+		if p.RuntimeMinutes == nil {
+			if n, ok := eventNumber(ev.Details, "runtime_minutes", 0, maxRuntimeMinutes); ok {
+				p.RuntimeMinutes = &n
+				p.RuntimeFromEvent = true
 			}
 		}
 	}
+}
+
+const DefaultBatteryDays = 30
+
+var batteryDays = []int{30, 90, 180, 365}
+
+// ValidBatteryDays reports whether days is a selectable battery graph range.
+func ValidBatteryDays(days int) bool {
+	for _, d := range batteryDays {
+		if d == days {
+			return true
+		}
+	}
+	return false
+}
+
+// ReadBattery returns the independently selectable battery-only graph history.
+// It contains at most 30 days of actual 15-minute samples (the existing
+// retention policy), plus true event timestamps across the requested year.
+// The sparse older section does not invent 15-minute samples or uptime.
+// The returned range ends at now, so events in the current quarter-hour are
+// inside it.
+func (s *Store) ReadBattery(days int, now time.Time, eventDir string) (Result, error) {
+	if !ValidBatteryDays(days) {
+		return Result{}, fmt.Errorf("battery range must be 30, 90, 180 or 365 days")
+	}
+	now = now.UTC()
+	start := now.Truncate(Interval).Add(-time.Duration(days) * 24 * time.Hour)
+	recent, err := s.Read(30, now, "")
+	if err != nil {
+		return Result{}, err
+	}
+	result := Result{
+		From: start, To: now, IntervalSeconds: int(Interval.Seconds()),
+		Points: recent.Points, Events: []events.Event{}, Samples: recent.Samples,
+	}
+	if eventDir == "" {
+		return result, nil
+	}
+	all, err := events.ReadPowerTimeline(eventDir, start, now)
+	if err != nil {
+		return Result{}, err
+	}
+	result.Events = all
+	// Only backfill the recent grid. Older events remain isolated dots with
+	// their exact timestamps and must never extend the recent sample lines.
+	backfillFromEvents(result.Points, recent.From, all)
 	return result, nil
+}
+
+// eventNumber accepts only a valid numeric measurement actually stored in an event.
+func eventNumber(details map[string]any, key string, min, max float64) (float64, bool) {
+	v, ok := details[key]
+	if !ok {
+		return 0, false
+	}
+	n, ok := v.(float64)
+	if !ok || !valid(&n, min, max) {
+		return 0, false
+	}
+	return n, true
 }

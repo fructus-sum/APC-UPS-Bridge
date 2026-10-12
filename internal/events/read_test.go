@@ -52,3 +52,26 @@ func TestReadHistoryAndReport(t *testing.T) {
 		t.Fatal("newest event not first")
 	}
 }
+
+func TestReadPowerTimelineKeepsNewestWhenOverCap(t *testing.T) {
+	dir := t.TempDir()
+	w := FileWriter{Dir: dir}
+	base := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	for i := 0; i < 13; i++ {
+		if err := w.Write(Event{Time: base.Add(time.Duration(i) * time.Second), Type: "power_lost", Details: map[string]any{"n": float64(i)}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := readPowerTimeline(dir, base.Add(-time.Hour), time.Now().UTC(), 5)
+	if err != nil {
+		t.Fatalf("over-cap window must not fail: %v", err)
+	}
+	if len(got) != 5 {
+		t.Fatalf("expected 5 events, got %d", len(got))
+	}
+	for i, e := range got {
+		if e.Details["n"] != float64(8+i) {
+			t.Fatalf("expected newest events oldest-first, got %+v", got)
+		}
+	}
+}
