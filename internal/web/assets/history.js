@@ -83,9 +83,8 @@ function drawBattery(report){
   let d='',continuous=false;
   for(const p of report.points){
    const v=p.runtime_minutes;
-   if(typeof v!=='number'||!Number.isFinite(v)||(!p.observed&&!p.runtime_from_event)){continuous=false;continue;}
+   if(typeof v!=='number'||!Number.isFinite(v)||!p.observed){continuous=false;continue;}
    const xp=x(p.time).toFixed(2),yp=(T+h-v/max*h).toFixed(2);
-   if(p.runtime_from_event){chart.append(svg('circle',{cx:xp,cy:yp,r:3,fill:'#aa6bba'}));continuous=false;continue;}
    d+=(continuous?'L':'M')+xp+' '+yp+' ';continuous=true;
   }
   if(d)chart.append(svg('path',{d,fill:'none',stroke:'#aa6bba','stroke-width':2}));
@@ -94,10 +93,26 @@ function drawBattery(report){
    label.textContent=Math.round(max*i/4)+' min';chart.append(label);
   }
  }
- for(const p of report.points){
-  if(!p.battery_from_event||typeof p.battery_percent!=='number')continue;
-  if(!p.observed)chart.append(svg('circle',{cx:x(p.time),cy:y(p.battery_percent),r:3.5,fill:'#24986b',stroke:'#fff','stroke-width':1}));
+ // The actual time of an event is more precise than its fifteen-minute
+ // sample bucket. Draw an isolated dot at that recorded timestamp even when
+ // another sample occupies the same bucket.
+ for(const event of report.events||[]){
+  const t=new Date(event.time).getTime();
+  if(!Number.isFinite(t)||t<from||t>to)continue;
+  const details=event.details||{};
+  const b=details.battery_percent;
+  if(typeof b==='number'&&Number.isFinite(b)&&b>=0&&b<=100){
+   const dot=svg('circle',{cx:x(event.time),cy:y(b),r:event.type==='battery_fully_charged'?5:3.5,fill:'#24986b',stroke:'#fff','stroke-width':1});
+   const tip=svg('title');tip.textContent=event.type+' · Battery '+b+'%';dot.append(tip);chart.append(dot);
+  }
+  const runtime=details.runtime_minutes;
+  if(typeof runtime==='number'&&Number.isFinite(runtime)&&runtime>=0&&runtime<=100000&&runtimeValues.length){
+   const max=Math.max(10,Math.ceil(Math.max(...runtimeValues)/10)*10);
+   const dot=svg('circle',{cx:x(event.time),cy:T+h-runtime/max*h,r:3,fill:'#aa6bba'});
+   const tip=svg('title');tip.textContent=event.type+' · Runtime '+runtime+' minutes';dot.append(tip);chart.append(dot);
+  }
  }
+
 }
 function summary(report){
  const points=report.points||[],measured=points.filter(p=>p.observed).length;
