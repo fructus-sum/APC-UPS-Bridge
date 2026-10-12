@@ -42,3 +42,20 @@ Power protection state is stored at `/var/lib/apc-ups-bridge/power-state.json`, 
 The dashboard and saved remote-device cards show friendly names and **Online** or **Offline (SSH unreachable)**. This is an independent, authenticated, read-only TCP probe of each configured SSH port, refreshed every 30 seconds by the browser. It performs **no SSH authentication**, does not test the shutdown command, and cannot wake or shut down a host. An SSH port that is closed, blocked or unreachable may show Offline even when the machine is running; Online means only that the SSH TCP port accepted a connection. It does not claim verified machine power state. The response contains only friendly names, device IDs, status and check timestamps, never SSH credentials.
 
 Saved devices are collapsed on the Power rules page by default, with the friendly name, reachability status and Remove control always visible. Open a device to edit its fields or perform the existing connection-only Test SSH. New devices start expanded, and invalid fields reopen their editor when saving. The web server retains its original unprivileged service identity.
+
+## Battery health and self-testing
+
+The dashboard's collapsed **System information** details include a **Battery health & maintenance** group. Optional status values from apcaccess are battery voltage (BATTV), nominal battery voltage (NOMBATTV), installation/replacement date (BATTDATE), last self-test (LASTSTEST), self-test result (SELFTEST), and self-test interval (STESTI). Missing values are shown as **Not reported**, not zeros or a false health verdict. The page does not change UPS settings.
+
+The **Battery self-test instructions** button has an explicit danger warning and requires confirmation to reveal the local command sequence. **It never runs a self-test in the web process.** On supported APC hardware, a host administrator can enter maintenance mode at the machine's console with:
+
+```sh
+sudo systemctl stop apcupsd
+sudo apctest
+# Select the supported self-test action from the interactive menu.
+# Regardless of success/failure, finish by restoring service:
+sudo systemctl start apcupsd
+apcaccess status
+```
+
+WARNING: An APC self-test can run the protected load from battery, possibly triggering a UPS shutdown on weak or overloaded equipment. Stopping apcupsd temporarily disables native Pi UPS shutdown protection and causes monitoring/automation interruptions. Do not test during an outage or when a battery is weak. Perform under a planned, attended maintenance window and verify the service recovered. Hardware/driver support differs, so absence of a supported self-test action in apctest means it must not be attempted through arbitrary commands. No sudoers, service user or host-settings helper permissions are widened for this feature.
