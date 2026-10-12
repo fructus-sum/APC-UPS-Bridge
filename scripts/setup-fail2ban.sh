@@ -20,7 +20,10 @@ jail="$jail_dir/apc-ups-bridge.local"
 if ! command -v fail2ban-client >/dev/null 2>&1; then
   say 'Installing fail2ban via apt-get.'
   DEBIAN_FRONTEND=noninteractive apt-get update -q </dev/null
-  DEBIAN_FRONTEND=noninteractive apt-get install -y fail2ban </dev/null
+  DEBIAN_FRONTEND=noninteractive apt-get install -y fail2ban python3-systemd </dev/null
+fi
+if ! dpkg-query -W -f='${Status}' python3-systemd 2>/dev/null | grep -q 'install ok installed'; then
+  DEBIAN_FRONTEND=noninteractive apt-get install -y python3-systemd </dev/null
 fi
 install -d -o root -g root -m 0755 "$filter_dir" "$action_dir" "$jail_dir" /usr/local/libexec
 install -d -o root -g apc-ups-bridge -m 0750 "$log_dir"
