@@ -203,6 +203,18 @@ printf 'ISCONFIGURED=no\n# retained\n' > "$stage/apcupsd.default"
 set_apc_default "$stage/apcupsd.default"
 grep -q '^ISCONFIGURED=yes$' "$stage/apcupsd.default" || fail 'ISCONFIGURED not set'
 grep -q '^# retained$' "$stage/apcupsd.default" || fail 'default file comment lost'
+# The shared helper: replace the first match, drop later ones, append when missing, keep owner and mode.
+printf 'A 1\nB 2\nA 3\nAB 4\n' > "$stage/rcl.txt"; chmod 0640 "$stage/rcl.txt"
+replace_config_line "$stage/rcl.txt" field A 'A new'
+[[ $(cat "$stage/rcl.txt") == $'A new\nB 2\nAB 4' ]] || fail 'replace_config_line field replace/dedupe'
+replace_config_line "$stage/rcl.txt" field C 'C 5'
+[[ $(tail -n 1 "$stage/rcl.txt") == 'C 5' ]] || fail 'replace_config_line field append'
+printf 'X=1\nXY=2\nX=3\n' > "$stage/rcl.txt"
+replace_config_line "$stage/rcl.txt" prefix X= 'X=9'
+[[ $(cat "$stage/rcl.txt") == $'X=9\nXY=2' ]] || fail 'replace_config_line prefix replace/dedupe'
+[[ $(stat -c %a "$stage/rcl.txt") == 640 ]] || fail 'replace_config_line mode not kept'
+[[ $(stat -c %U "$stage/rcl.txt") == $(id -un) ]] || fail 'replace_config_line owner not kept'
+[[ $(ls "$stage" | grep -c '^rcl\.txt\.') == 0 ]] || fail 'replace_config_line left a temp file'
 
 # --- apcupsd: should_configure_apcupsd decision matrix ---
 CONFIG_DIR="$stage/new-install-config"
