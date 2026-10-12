@@ -383,7 +383,31 @@ func (e *Engine) summary(i *Incident, now time.Time) (string, string) {
 			break
 		}
 		fmt.Fprintf(&b, "%s %s", ev.Time.UTC().Format(time.RFC3339), ev.Type)
-		// Omit untrusted event details: they may contain network addresses.
+		// Preserve useful numerical metrics and configured friendly names, but
+		// never include arbitrary event details: they may contain IP addresses.
+		var details = map[string]any{}
+		for key, value := range ev.Details {
+			switch key {
+			case "battery_percent", "load_percent", "runtime_minutes", "remaining_minutes", "duration_seconds", "duration_minutes", "retry", "count", "sequence", "priority":
+				switch value.(type) {
+				case int, int64, float64, bool:
+					details[key] = value
+				}
+			case "name", "device_name", "friendly_name":
+				if label, ok := value.(string); ok {
+					for _, target := range i.Targets {
+						if label == target.Name {
+							details[key] = label
+							break
+						}
+					}
+				}
+			}
+		}
+		if len(details) > 0 {
+			d, _ := json.Marshal(details)
+			fmt.Fprintf(&b, " %s", d)
+		}
 		fmt.Fprintln(&b)
 	}
 	return "APC UPS Bridge — Fully charged recovery report", b.String()
