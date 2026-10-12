@@ -62,7 +62,7 @@ maxretry = 5
 findtime = 10m
 bantime = 10m
 bantime.increment = true
-bantime.factor = 2
+bantime.factor = 1
 bantime.maxtime = 1d
 action = %(action_)s
          apc-ups-bridge-event
