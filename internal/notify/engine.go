@@ -8,13 +8,13 @@ import (
 	"fmt"
 	"math"
 	"net"
-	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/apc"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/events"
+	"github.com/fructus-sum/APC-UPS-Bridge/internal/fileutil"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/monitor"
 )
 
@@ -101,14 +101,12 @@ func Open(store *Store, statePath, logDir string, writer events.Writer, sender S
 		return nil, fmt.Errorf("email engine missing dependencies")
 	}
 	e := &Engine{store: store, path: statePath, logs: logDir, writer: writer, sender: sender, probe: TCPProbe, hosts: checkHosts, now: time.Now}
-	b, err := os.ReadFile(statePath)
-	if err != nil && !os.IsNotExist(err) {
-		return nil, err
+	found, err := fileutil.ReadJSON(statePath, &e.state)
+	if found && err != nil {
+		err = fmt.Errorf("invalid saved email outage report: %w", err)
 	}
-	if err == nil {
-		if err = json.Unmarshal(b, &e.state); err != nil {
-			return nil, fmt.Errorf("invalid saved email outage report: %w", err)
-		}
+	if err != nil {
+		return nil, err
 	}
 	if e.state.Current != nil {
 		if e.state.Current.ID == "" || len(e.state.Current.Periods) == 0 {
@@ -153,11 +151,7 @@ func (e *Engine) SaveConfig(c Config) error {
 	return nil
 }
 func (e *Engine) persist() error {
-	b, err := json.MarshalIndent(e.state, "", "  ")
-	if err != nil {
-		return err
-	}
-	return atomicWrite(e.path, append(b, '\n'))
+	return fileutil.WriteJSONAtomic(e.path, e.state, 0600)
 }
 func (e *Engine) log(typ, level string, details map[string]any) {
 	_ = e.writer.Write(events.Event{Time: e.now().UTC(), Type: typ, Level: level, Details: details})

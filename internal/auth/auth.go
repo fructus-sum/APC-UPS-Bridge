@@ -13,9 +13,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/fructus-sum/APC-UPS-Bridge/internal/fileutil"
 )
 
 const iterations = 240000
@@ -93,36 +94,7 @@ func writePassword(path, password string) error {
 	}
 	digest := pbkdf2([]byte(password), salt, iterations, 32)
 	rec := record{Scheme: "pbkdf2-sha256", Iterations: iterations, Salt: base64.RawStdEncoding.EncodeToString(salt), Hash: base64.RawStdEncoding.EncodeToString(digest)}
-	data, err := json.MarshalIndent(rec, "", "  ")
-	if err != nil {
-		return err
-	}
-	dir := filepath.Dir(path)
-	if err = os.MkdirAll(dir, 0700); err != nil {
-		return err
-	}
-	f, err := os.CreateTemp(dir, ".auth-*")
-	if err != nil {
-		return err
-	}
-	tmp := f.Name()
-	defer os.Remove(tmp)
-	if err = f.Chmod(0600); err != nil {
-		f.Close()
-		return err
-	}
-	if _, err = f.Write(append(data, '\n')); err != nil {
-		f.Close()
-		return err
-	}
-	if err = f.Sync(); err != nil {
-		f.Close()
-		return err
-	}
-	if err = f.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return fileutil.WriteJSONAtomic(path, rec, 0600)
 }
 func pbkdf2(password, salt []byte, count, keyLen int) []byte {
 	// RFC 8018 PBKDF2-HMAC-SHA256 (one 32-byte block for this application).

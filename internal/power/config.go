@@ -2,14 +2,13 @@
 package power
 
 import (
-	"encoding/json"
 	"fmt"
 	"net"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
+
+	"github.com/fructus-sum/APC-UPS-Bridge/internal/fileutil"
 )
 
 // Device identifies an explicitly approved Linux host. No arbitrary shell commands
@@ -134,16 +133,16 @@ type Store struct {
 
 func OpenConfig(path string) (*Store, error) {
 	s := &Store{path: path, value: Defaults()}
-	b, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
+	var v Config
+	found, err := fileutil.ReadJSON(path, &v)
+	if !found && err == nil {
 		return s, nil
 	}
 	if err != nil {
+		if found {
+			err = fmt.Errorf("power configuration: %w", err)
+		}
 		return nil, err
-	}
-	var v Config
-	if err = json.Unmarshal(b, &v); err != nil {
-		return nil, fmt.Errorf("power configuration: %w", err)
 	}
 	if err = v.Validate(); err != nil {
 		return nil, err
@@ -162,50 +161,11 @@ func (s *Store) Save(v Config) error {
 	if err := v.Validate(); err != nil {
 		return err
 	}
-	b, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
-		return err
-	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err = atomicWrite(s.path, append(b, '\n')); err != nil {
+	if err := fileutil.WriteJSONAtomic(s.path, v, 0600); err != nil {
 		return err
 	}
 	s.value = v
 	return nil
-}
-func atomicWrite(path string, data []byte) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return err
-	}
-	f, err := os.CreateTemp(filepath.Dir(path), ".power-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(f.Name())
-	if err = f.Chmod(0600); err != nil {
-		f.Close()
-		return err
-	}
-	if _, err = f.Write(data); err != nil {
-		f.Close()
-		return err
-	}
-	if err = f.Sync(); err != nil {
-		f.Close()
-		return err
-	}
-	if err = f.Close(); err != nil {
-		return err
-	}
-	if err = os.Rename(f.Name(), path); err != nil {
-		return err
-	}
-	// A rename alone does not guarantee durability across sudden power loss.
-	dir, err := os.Open(filepath.Dir(path))
-	if err != nil {
-		return err
-	}
-	defer dir.Close()
-	return dir.Sync()
 }

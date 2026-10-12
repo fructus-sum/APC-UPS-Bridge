@@ -11,6 +11,7 @@ import (
 
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/apc"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/events"
+	"github.com/fructus-sum/APC-UPS-Bridge/internal/fileutil"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/monitor"
 )
 
@@ -159,7 +160,7 @@ func (c *Controller) persist() error {
 	if err != nil {
 		return err
 	}
-	return atomicWrite(c.path, append(data, '\n'))
+	return fileutil.WriteFileAtomic(c.path, append(data, '\n'), 0600)
 }
 func (c *Controller) event(typ, level string, data map[string]any) error {
 	return c.writer.Write(events.Event{Time: c.now().UTC(), Type: typ, Level: level, Details: data})
