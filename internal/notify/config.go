@@ -2,15 +2,14 @@
 package notify
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"net/mail"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
+
+	"github.com/fructus-sum/APC-UPS-Bridge/internal/fileutil"
 )
 
 // Config is stored in a permission-restricted file. Password is never serialized
@@ -88,15 +87,15 @@ type Store struct {
 
 func OpenConfig(path string) (*Store, error) {
 	s := &Store{path: path, value: DefaultConfig()}
-	b, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
+	found, err := fileutil.ReadJSON(path, &s.value)
+	if !found && err == nil {
 		return s, nil
 	}
 	if err != nil {
+		if found {
+			err = fmt.Errorf("SMTP configuration invalid: %w", err)
+		}
 		return nil, err
-	}
-	if err = json.Unmarshal(b, &s.value); err != nil {
-		return nil, fmt.Errorf("SMTP configuration invalid: %w", err)
 	}
 	if err = s.value.Validate(); err != nil {
 		return nil, err
@@ -115,47 +114,9 @@ func (s *Store) Save(v Config) error {
 	if err := v.Validate(); err != nil {
 		return err
 	}
-	b, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
-		return err
-	}
-	if err = atomicWrite(s.path, append(b, '\n')); err != nil {
+	if err := fileutil.WriteJSONAtomic(s.path, v, 0600); err != nil {
 		return err
 	}
 	s.value = v
 	return nil
-}
-func atomicWrite(path string, b []byte) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return err
-	}
-	f, err := os.CreateTemp(filepath.Dir(path), ".email-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(f.Name())
-	if err = f.Chmod(0600); err != nil {
-		f.Close()
-		return err
-	}
-	if _, err = f.Write(b); err != nil {
-		f.Close()
-		return err
-	}
-	if err = f.Sync(); err != nil {
-		f.Close()
-		return err
-	}
-	if err = f.Close(); err != nil {
-		return err
-	}
-	if err = os.Rename(f.Name(), path); err != nil {
-		return err
-	}
-	dir, err := os.Open(filepath.Dir(path))
-	if err != nil {
-		return err
-	}
-	defer dir.Close()
-	return dir.Sync()
 }

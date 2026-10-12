@@ -11,6 +11,7 @@ import (
 
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/apc"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/events"
+	"github.com/fructus-sum/APC-UPS-Bridge/internal/fileutil"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/monitor"
 )
 
@@ -159,7 +160,7 @@ func (c *Controller) persist() error {
 	if err != nil {
 		return err
 	}
-	return atomicWrite(c.path, append(data, '\n'))
+	return fileutil.WriteFileAtomic(c.path, append(data, '\n'), 0600)
 }
 func (c *Controller) event(typ, level string, data map[string]any) error {
 	return c.writer.Write(events.Event{Time: c.now().UTC(), Type: typ, Level: level, Details: data})
@@ -311,7 +312,7 @@ func (c *Controller) decide(s monitor.Status, emit emitFunc) (decision, error) {
 			}
 			details := map[string]any{"stable_seconds": int(stable.Seconds()), "required_battery_percent": rules.RecoveryBatteryPercent}
 			if snap.BatteryPercent != nil {
-				details["battery_percent"] = *snap.BatteryPercent
+				details[events.DetailBatteryPercent] = *snap.BatteryPercent
 			}
 			emit("power_recovery_battery_timeout", "warning", details)
 		}

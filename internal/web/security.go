@@ -15,7 +15,7 @@ const authFailureLogFormat = "APC_UPS_BRIDGE_AUTH_FAILURE ip=%s"
 
 // Independent privileged audit trail. Never make it writable by the web service.
 // Deliberately read only the dedicated exported log, not general system journal.
-var fail2banLogPath = "/var/log/apc-ups-bridge-fail2ban/events.log"
+const defaultFail2banLog = "/var/log/apc-ups-bridge-fail2ban/events.log"
 
 type securityEvent struct {
 	Time   string `json:"time"`
@@ -32,11 +32,10 @@ func (h *Handler) securityRoutes(w http.ResponseWriter, r *http.Request) bool {
 	if r.URL.Path != "/api/security/fail2ban" {
 		return false
 	}
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, http.MethodGet) {
 		return true
 	}
-	f, err := os.Open(fail2banLogPath)
+	f, err := os.Open(h.Fail2banLog)
 	if err != nil {
 		if os.IsNotExist(err) {
 			respondJSON(w, securityResponse{[]securityEvent{}, "Fail2ban event log is not available. Check the installation and service."})

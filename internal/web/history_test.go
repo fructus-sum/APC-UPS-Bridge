@@ -4,26 +4,20 @@ import (
 	"encoding/json"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/history"
 	"net/http"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
 
 func TestHistoryPageAndAPIProtected(t *testing.T) {
-	h, auth := setupWeb(t)
-	AttachHistory(h, history.New(filepath.Join(t.TempDir(), "history")))
+	f := newFixture(t, withHistory())
+	h, cookie := f.Handler, f.Cookie
 	for _, path := range []string{"/history", "/api/history", "/api/history/battery", "/assets/history.js"} {
 		w := request(h, "GET", path, "", nil, "")
 		if w.Code != http.StatusSeeOther && w.Code != http.StatusUnauthorized {
 			t.Fatalf("not protected: %s status %d", path, w.Code)
 		}
 	}
-	token, _, err := auth.Login("127.0.0.1", "admin", "long secret passphrase")
-	if err != nil {
-		t.Fatal(err)
-	}
-	cookie := &http.Cookie{Name: "ups_bridge_session", Value: token}
 	w := request(h, "GET", "/history", "", cookie, "")
 	if w.Code != 200 || !strings.Contains(w.Body.String(), "history-days") {
 		t.Fatalf("page unavailable %d %s", w.Code, w.Body.String())
@@ -51,13 +45,8 @@ func TestHistoryPageAndAPIProtected(t *testing.T) {
 }
 
 func TestBatteryHistoryIndependentRanges(t *testing.T) {
-	h, a := setupWeb(t)
-	AttachHistory(h, history.New(filepath.Join(t.TempDir(), "history")))
-	token, _, err := a.Login("127.0.0.1", "admin", "long secret passphrase")
-	if err != nil {
-		t.Fatal(err)
-	}
-	cookie := &http.Cookie{Name: "ups_bridge_session", Value: token}
+	f := newFixture(t, withHistory())
+	h, cookie := f.Handler, f.Cookie
 	for _, days := range []string{"", "30", "90", "180", "365"} {
 		suffix := ""
 		if days != "" {

@@ -194,28 +194,26 @@ should_configure_apcupsd() {
   [[ -e "$CONFIG_DIR/service.env" || -e "$PREFIX/$APP" ]] && return 1
   return 0
 }
-# Keep unrelated apcupsd settings intact. Runs on a newly installed apcupsd or with explicit opt-in.
-set_apc_key() {
-  local filename="$1" key="$2" value="$3" tmp
-  tmp=$(mktemp "${filename}.XXXXXX")
-  awk -v k="$key" -v v="$value" '
-    BEGIN { found=0 }
-    $1 == k { if (!found) { print k " " v; found=1 }; next }
-    { print }
-    END { if (!found) print k " " v }
-  ' "$filename" > "$tmp"
-  chmod --reference="$filename" "$tmp"
-  chown --reference="$filename" "$tmp"
-  mv -f "$tmp" "$filename"
-}
-set_apc_default() {
-  local file="$1" tmp
+# Rewrite one setting in a config file: the first matching line becomes $4, later matches
+# are dropped, and $4 is appended if nothing matched. $2 says how lines match key $3:
+# "field" = the first word equals the key, "prefix" = the line starts with the key.
+# Owner and mode are kept.
+replace_config_line() {
+  local file="$1" kind="$2" key="$3" line="$4" tmp
   tmp=$(mktemp "${file}.XXXXXX")
-  awk 'BEGIN { found=0 } /^ISCONFIGURED=/ { if (!found) { print "ISCONFIGURED=yes"; found=1 }; next } { print } END { if (!found) print "ISCONFIGURED=yes" }' "$file" > "$tmp"
+  awk -v kind="$kind" -v k="$key" -v line="$line" '
+    BEGIN { found=0 }
+    (kind == "field" ? $1 == k : index($0, k) == 1) { if (!found) { print line; found=1 }; next }
+    { print }
+    END { if (!found) print line }
+  ' "$file" > "$tmp"
   chmod --reference="$file" "$tmp"
   chown --reference="$file" "$tmp"
   mv -f "$tmp" "$file"
 }
+# Keep unrelated apcupsd settings intact. Runs on a newly installed apcupsd or with explicit opt-in.
+set_apc_key() { replace_config_line "$1" field "$2" "$2 $3"; }
+set_apc_default() { replace_config_line "$1" prefix ISCONFIGURED= ISCONFIGURED=yes; }
 configure_apcupsd() {
   [[ -f "$APC_CONF" ]] || die "No apcupsd configuration at $APC_CONF"
   local suffix
@@ -350,16 +348,17 @@ load_existing_listen() {
   return 0
 }
 set_listen_config() {
-  local file="$CONFIG_DIR/service.env"
+  local file="$CONFIG_DIR/service.env" tmp
   if [[ -f "$file" && "$LISTEN_PROVIDED" != true ]]; then
     # Preserve user-edited service settings on upgrade.
     load_existing_listen
     return
   fi
-  printf 'APC_LISTEN=%s\n' "$LISTEN" > "${file}.tmp"
-  chown "$SERVICE_USER:$SERVICE_USER" "${file}.tmp"
-  chmod 0600 "${file}.tmp"
-  mv -f "${file}.tmp" "$file"
+  tmp=$(mktemp "${file}.XXXXXX")
+  printf 'APC_LISTEN=%s\n' "$LISTEN" > "$tmp"
+  chown "$SERVICE_USER:$SERVICE_USER" "$tmp"
+  chmod 0600 "$tmp"
+  mv -f "$tmp" "$file"
 }
 # URLs to print at the end. $1 = HOST:PORT, $2 = whitespace-separated host addresses.
 access_urls() {

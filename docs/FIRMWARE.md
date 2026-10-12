@@ -1,15 +1,37 @@
-# Firmware checker (manual updates only)
+# Firmware check
 
-APC UPS Bridge reads the `MODEL`, optional `SKU`, and `FIRMWARE` fields reported by `apcaccess status`. It does **not** install firmware, run update commands, or require an additional service, port, database, scheduled network request, or Go dependency.
+APC UPS Bridge reads the firmware information your UPS reports and compares it with a short reference list taken from [Schneider Electric's firmware guide](https://www.se.com/us/en/faqs/FA279197/). It only tells you when a newer version is listed. It never installs, uploads or flashes firmware, and it does not look anything up online.
 
-The authenticated dashboard **always** displays the UPS's reported firmware string (or **Unknown** when absent), UPS ID if identifiable, and a separate firmware update status. An **Unknown** update status does not mean the device is outdated. When communication fails, the display says that the UPS is unavailable rather than showing a stale version as current.
+## Where to see it
 
-On the authenticated dashboard, a warning appears **only when** the firmware string explicitly provides a UPS firmware revision and UPS ID, the device's model/SKU explicitly identifies a supported series, and that **series + UPS ID** is present in the reviewed reference table in `internal/firmware/firmware.go`. The reference is manually curated using [Schneider Electric FA279197](https://www.se.com/us/en/faqs/FA279197/) and was reviewed on 2026-10-10. Check the official guide before acting: this local reference can become stale.
+- **Settings** has a **UPS firmware** panel with the **Installed firmware version**, the **Firmware update status** and the **UPS ID**.
+- The dashboard stays quiet unless an update is listed. Then it shows "A firmware update is listed for your UPS. See Settings →".
 
-The checker is deliberately conservative. Many old APC USB models report no usable ID, model SKU, or firmware version; for those UPSes **no out-of-date claim is made**. Some legacy Smart-UPS families are not user-upgradeable. The API `GET /api/firmware` returns statuses `outdated`, `current`, `unknown`, `not_upgradeable`, or `unavailable`, but only an `outdated` result generates a dashboard warning. Device communication loss suppresses any old warning. This is a local **reference comparison**, not a live firmware lookup.
+## What the update status means
 
-Firmware updates, where supported, may interrupt battery backup or output power, and some models require a serial connection. Use the manufacturer guide and an appropriate maintenance window. Never assume the USB monitoring connection means USB flashing is supported. Do not flash firmware through APC UPS Bridge.
+| Status | Meaning |
+| --- | --- |
+| Update listed | The reference lists a newer version for your UPS. The panel also shows your version, the listed version and the date the reference was reviewed. |
+| Matches local reference | Your version is the one in the reference. This is not a live check, so a newer one may exist. |
+| Not user-upgradeable | Schneider Electric lists this older Smart-UPS family as not upgradeable by the owner. |
+| Unknown | The bridge cannot tell. This does not mean your firmware is out of date. |
+| UPS unavailable | The bridge cannot talk to the UPS right now, so nothing can be checked. |
 
-### Updating the reference
+The installed version shows "Unknown (not reported by UPS)" if your UPS does not report one, and "Unknown (unable to check)" if the page could not load the details.
 
-Review Schneider's firmware table and release notes. Modify `latest` entries **only** for confirmed `series/UPS ID` pairs, and update `ReferenceDate`. Keep model exceptions and exclusion checks current. Add a test for every new family or special case. The web UI warning remains advisory and links to the manufacturer; it performs no network requests.
+## When the status is Unknown
+
+The check is cautious and only says "Update listed" when it is sure. It stays Unknown when:
+
+- the UPS does not report a model, a firmware version or a UPS ID (many older APC USB models do not);
+- the model name is too general to tell which product line it belongs to, such as "Smart-UPS 2200";
+- your model is one that Schneider Electric treats as a special case, or your UPS ID is not in the reference;
+- your installed version is newer than the one in the reference. No warning is shown then.
+
+## Before you update
+
+Firmware updates can interrupt battery backup or output power, and some models need a serial connection, so a working USB monitoring cable does not mean USB flashing is possible. Follow the manufacturer's guide and choose a quiet maintenance window.
+
+## For administrators
+
+The reference list is part of the program and has a review date. The date appears in the "Update listed" panel. The `GET /api/firmware` endpoint returns the statuses `outdated`, `current`, `unknown`, `not_upgradeable` and `unavailable`. To change the reference, see [Development in the architecture guide](ARCHITECTURE.md#development).

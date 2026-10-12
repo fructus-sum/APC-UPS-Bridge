@@ -2,51 +2,53 @@
 
 **Web monitoring and optional power protection for a USB-connected APC UPS.**
 
-APC UPS Bridge runs on a Raspberry Pi or other Linux host and reads a single APC UPS through `apcupsd`/`apcaccess`. It provides an authenticated web dashboard, event history, optional remote Linux shutdown/Wake-on-LAN, and SMTP outage notifications. The application is one Go executable with an embedded web interface: no database, external web framework, cloud account, or third-party Go modules.
+APC UPS Bridge runs on a Raspberry Pi or other Linux computer, reads a single APC UPS through `apcupsd`, and shows it in a password-protected web page. It can also shut down other computers on your network when the power fails and wake them again afterwards, and it can email you about outages. No cloud account or database is needed: everything stays on your own hardware.
 
-> **Safety:** Power automation is disabled until explicitly enabled. The software has automated tests, but UPS models, remote shutdown, Wake-on-LAN, and installation still need validation on the equipment you will protect. Do not make this your sole safeguard without that testing.
+> **Safety:** Power automation is switched off until you turn it on. Test your UPS, remote shutdown and Wake-on-LAN on equipment you can afford to restart before relying on them. Do not make this your only safeguard.
 
 ## What it does
 
-- **Dashboard:** live mains/battery state, charge, remaining runtime, load, voltages, UPS identification and communication health, when reported by the device.
-- **Events and reports:** event-only monthly JSONL logs, filtered history, observed outage durations, CSV export and configurable retention. Routine poll samples are not stored in event logs.
-- **History graphs:** input/output voltage and UPS load sampled every 15 minutes and kept for 30 days, with power events marked (see [Voltage and UPS load history](#voltage-and-ups-load-history)).
-- **Power rules and devices:** up to 16 approved remote Linux hosts; independent remote shutdown threshold (20% battery by default), order/priority, optional Wake-on-LAN recovery, and a connection-only **Test SSH** button for saved devices (checks public-key login, not shutdown permission). The Pi's own shutdown remains under `apcupsd`, with its configured thresholds displayed separately. Each device also shows an online status (one ping per minute by default, or a connect-only SSH port check, never an SSH login), for display only. Actions are persisted across bridge restarts and power cycles.
-- **Email notifications:** configure a TLS/STARTTLS SMTP account; one-shot outage/restoration alerts and a durable final report after mains returns, the UPS reports 100% charge, and optionally monitored devices are SSH-reachable. Reports persist across bridge restarts.
-- **Firmware information and advisory:** always display reported firmware (or **Unknown**) and the separate update-check status; warn only for recognized model/UPS-ID combinations whose installed firmware is below a dated local Schneider reference. No firmware is flashed.
-- **Administration:** single administrator account, session-based login, password change, configurable polling (5–60 seconds), battery warning and log retention.
+- **Dashboard:** whether you are on mains or battery power, a battery charge bar, remaining runtime, load, voltages, UPS details and communication health, when your UPS reports them. A **Battery health & maintenance** panel shows battery details your UPS reports and steps for a manual battery test (see [battery health](docs/BATTERY.md)). A **Protected devices** panel shows whether each computer you protect is online. A notice appears when a firmware update is listed for your UPS.
+- **History graphs:** input and output voltage and UPS load for the last 24 hours, 7, 14 (default) or 30 days, and a battery charge, runtime and mains-power graph for 30 (default), 90, 180 or 365 days. Power events are marked on the graphs. See [history graphs](docs/HISTORY.md).
+- **Events & reports:** a timeline of power changes and communication problems, how long each outage lasted, filters, CSV export and a choice of how long events are kept.
+- **Power rules & devices:** list up to 16 computers to shut down over SSH, in the order you choose, when the battery falls to a level you set, with optional Wake-on-LAN to start them again after power returns. Each device has an **Online check** (Ping, SSH port or Off) that is only shown on the dashboard and never shuts anything down, and a **Test SSH** button that checks the login without shutting anything down. Pending shutdowns and wake-ups survive restarts and power cuts. See [power protection](docs/POWER-PROTECTION.md).
+- **Email notifications:** connect an email account to get a message when an outage starts and ends, plus a final report once power is back, the UPS is fully charged and your devices are reachable. See [email notifications](docs/EMAIL-NOTIFICATIONS.md).
+- **Login security:** the web login blocks repeated wrong passwords, and the **Login security** page lists recent bans and unbans made by Fail2ban (set up automatically on Debian and Ubuntu). See [login security](docs/LOGIN-SECURITY.md).
+- **Settings:** how often the UPS is read (5 to 60 seconds), the low-battery warning level, how long events are kept, when the Raspberry Pi itself shuts down (below), the firmware panel and your administrator password.
+- **Firmware check:** shows the firmware your UPS reports and warns when a newer one is listed for your model. It only compares against a built-in list and never installs firmware. See [firmware guidance](docs/FIRMWARE.md).
 
-See [power protection](docs/POWER-PROTECTION.md), [SSH key setup](docs/SSH-KEYS.md), [email delivery](docs/EMAIL-NOTIFICATIONS.md) and [firmware guidance](docs/FIRMWARE.md) for important behavior and limitations.
+### Raspberry Pi shutdown settings
+
+The **Settings** page can change when the Pi itself shuts down during an outage: the battery percentage, the remaining runtime and an on-battery timer. This is separate from the shutdown rules for other computers. Changes are accepted only while mains power is on, and the previous configuration is backed up first. Uninstalling the bridge leaves these settings in `apcupsd.conf`.
+
+### How often pages refresh
+
+The dashboard updates every 10 seconds. Firmware information and recent events update every 60 seconds. Updating pauses while the browser tab is hidden and catches up as soon as you return to it.
 
 ## Install on Linux / Raspberry Pi
 
-**Requirements:** systemd-based Linux, supported APC USB UPS, network access to fetch the source and (if needed) Go, and standard Linux utilities. The installer supports apt, dnf and zypper for installing `apcupsd`; other systems may need that package installed manually. **The installer builds from source** and does not require a published release.
-
+**Requirements:** a Linux computer with systemd, a supported APC USB UPS, and internet access during installation. The installer can install `apcupsd` with apt, dnf or zypper; on other systems install it yourself first. The installer builds the program on your computer, so you do not need to download a release.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/fructus-sum/APC-UPS-Bridge/main/scripts/install.sh | sudo bash
 ```
 
-The **Settings** page can configure the local Pi's native apcupsd shutdown percentage, remaining-runtime threshold and on-battery timer through a restricted systemd helper, independently of remote-machine thresholds. It refuses changes without confirmed ONLINE mains, backs up the current configuration, and retains a read-only/existing-settings mode.
+The installer asks for a web port (default **8080**) and an administrator password, then prints the address to open in your browser. It installs `apcupsd` if it is missing and sets it up for a USB UPS only in that case. An existing `apcupsd` configuration is left alone unless you ask otherwise. The bridge runs as its own limited user and starts automatically at boot.
 
-The installer asks for the web port (default **8080**) and an administrator password on an interactive first installation. By default the **installed service listens on all LAN interfaces** (`0.0.0.0:8080`); standalone runs of the binary default to **localhost only** (`127.0.0.1:8080`). The installer prints a suggested browser URL after installing.
+**Use it on your home network only.** The web page uses plain HTTP, so the password is not encrypted on the wire. Never forward its port to the internet. For access from elsewhere use a VPN or an HTTPS reverse proxy, or install with `--listen 127.0.0.1:8080` and put a proxy in front. By default the installed service is reachable from other devices on your network.
 
-It uses Go 1.22+ if available, otherwise downloads and verifies a temporary Go toolchain, builds the executable, and removes temporary build files. It installs `apcupsd` if missing; **only a newly installed apcupsd on a new Bridge host** is auto-configured for USB. An existing apcupsd configuration is preserved unless you explicitly pass `--configure-apcupsd`. The bridge runs under a dedicated `apc-ups-bridge` no-login system account and starts through systemd.
-
-**Security:** the web service uses **plain HTTP**, including administrator credentials. Use only on a trusted LAN; never port-forward it publicly. Prefer a trusted VPN or HTTPS reverse proxy for access beyond that network, or install with `--listen 127.0.0.1:8080` behind a local proxy.
-
-Read the [installation and recovery guide](docs/INSTALL.md) for setup options, SSH prerequisites, upgrades, service commands and removal.
+Read the [installation guide](docs/INSTALL.md) for setup options, upgrades, service commands and removal. To set up a remote computer for shutdown, see the [SSH key guide](docs/SSH-KEYS.md) and the [ready-made setup scripts](tools/README.md).
 
 ## Update, troubleshoot or uninstall
 
-To upgrade a checkout installation, update your local checkout then rerun the installer:
+To update, get the latest files and run the installer again:
 
 ```bash
 git pull
 sudo bash scripts/install.sh
 ```
 
-The installer retains existing credentials, settings, email and power-action state, event logs, and listening address. Check the running service and UPS communications with:
+(If you installed with the one-line command, run it again instead.) Your login, settings, email settings, device rules, event logs and listening address are kept. On Debian and Ubuntu the installer also sets up or refreshes the Fail2ban login protection; add `--skip-fail2ban` to skip that. Check the running service and the UPS with:
 
 ```bash
 systemctl status apc-ups-bridge.service
@@ -60,45 +62,10 @@ To remove the application while **keeping its data**:
 sudo apc-ups-bridge-uninstall
 ```
 
-Add `--purge` to also delete the Bridge configuration, credentials, durable state, logs and dedicated account. Uninstalling the Bridge does **not** uninstall or reconfigure `apcupsd`.
+Add `--purge` to also delete the configuration, credentials, saved state, logs and the dedicated account. Uninstalling does **not** remove or reconfigure `apcupsd`.
 
-## Voltage and UPS load history
+## Developers
 
-The password-protected **History graphs** tab records one input/output voltage and UPS-load percentage sample per 15 minutes for up to 30 days, with a default 14-day view. This is a separate bounded sample log, not continuous event-log recording. Power events annotate their actual timestamps; gaps while the host is off or the UPS unavailable remain blank rather than inferred. Existing event-only logs cannot reconstruct voltage or load samples recorded before this feature. See [graphing details](docs/HISTORY.md).
-
-## Developer build
-
-Go 1.22+ and working `apcaccess status` are required for an actual hardware reading. Build and run locally:
-
-```bash
-go test ./...
-go test -race ./...
-go vet ./...
-bash scripts/test-install.sh
-go build -o apc-ups-bridge ./cmd/apc-ups-bridge
-
-mkdir -p ./data
-read -rs -p 'Administrator password: ' UPS_BRIDGE_PASS; echo
-printf '%s\n' "$UPS_BRIDGE_PASS" | ./apc-ups-bridge --auth-file ./data/auth.json --set-password-stdin
-unset UPS_BRIDGE_PASS
-
-./apc-ups-bridge \
-  --auth-file ./data/auth.json \
-  --settings-file ./data/settings.json \
-  --power-config ./data/power.json \
-  --power-state ./data/power-state.json \
-  --email-config ./data/email.json \
-  --email-state ./data/email-state.json \
-  --log-dir ./data/events \
-  --listen 127.0.0.1:8080
-```
-
-Sign in at `http://127.0.0.1:8080/` as `admin`. To read the UPS once without starting a web service:
-
-```bash
-./apc-ups-bridge --once --settings-file ./data/settings.json --log-dir ./data/events
-```
-
-For the actual component layout and file locations, see [architecture](docs/ARCHITECTURE.md).
+Build, test and release instructions are in the [architecture guide](docs/ARCHITECTURE.md#development).
 
 APC is a trademark of its respective owner. This independent project is not affiliated with or endorsed by APC or Schneider Electric.

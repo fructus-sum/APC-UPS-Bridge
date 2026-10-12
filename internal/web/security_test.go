@@ -10,23 +10,17 @@ import (
 )
 
 func TestSecurityLogAuthenticatedReadOnly(t *testing.T) {
-	h, a := setupWeb(t)
+	f := newFixture(t)
+	h, c := f.Handler, f.Cookie
 	file := filepath.Join(t.TempDir(), "security.log")
 	data := "2026-10-12T09:00:00Z ban 192.0.2.5\ninvalid entry\n2026-10-12T09:10:00Z unban 192.0.2.5\n"
 	if err := os.WriteFile(file, []byte(data), 0600); err != nil {
 		t.Fatal(err)
 	}
-	before := fail2banLogPath
-	fail2banLogPath = file
-	defer func() { fail2banLogPath = before }()
+	f.Handler.Fail2banLog = file
 	if w := request(h, "GET", "/api/security/fail2ban", "", nil, ""); w.Code != http.StatusUnauthorized {
 		t.Fatalf("anonymous access: %d", w.Code)
 	}
-	token, _, err := a.Login("127.0.0.1", "admin", "long secret passphrase")
-	if err != nil {
-		t.Fatal(err)
-	}
-	c := &http.Cookie{Name: "ups_bridge_session", Value: token}
 	if w := request(h, "POST", "/api/security/fail2ban", "", c, ""); w.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("write method: %d", w.Code)
 	}

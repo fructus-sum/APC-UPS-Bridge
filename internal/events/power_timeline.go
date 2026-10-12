@@ -14,8 +14,8 @@ const maxPowerTimelineEvents = 8192
 // powerTimelineTypes is the single list of event types shown on the history
 // graphs.
 var powerTimelineTypes = map[string]bool{
-	"power_lost": true, "on_battery_detected": true, "power_restored": true, "low_battery": true,
-	"ups_communication_lost": true, "ups_communication_restored": true, "battery_fully_charged": true,
+	TypePowerLost: true, TypeOnBatteryDetected: true, TypePowerRestored: true, TypeLowBattery: true,
+	TypeUPSCommunicationLost: true, TypeUPSCommunicationRestored: true, TypeBatteryFullyCharged: true,
 }
 
 // newestOldestFirst sorts events oldest first and keeps only the newest max.

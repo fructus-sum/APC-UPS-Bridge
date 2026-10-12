@@ -2,8 +2,8 @@
 package web
 
 import (
-	"crypto/subtle"
 	"context"
+	"crypto/subtle"
 	"embed"
 	"encoding/csv"
 	"encoding/json"
@@ -42,6 +42,8 @@ type Handler struct {
 	Mail    *notify.Engine
 	History *history.Store
 	Status  *power.StatusMonitor
+	// Fail2banLog is the exported Fail2ban event log shown on the security page.
+	Fail2banLog string
 }
 type viewData struct {
 	Page    string
@@ -83,7 +85,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	if h.securityRoutes(w, r) { return }
+	if h.securityRoutes(w, r) {
+		return
+	}
 	if h.historyRoutes(w, r) {
 		return
 	}
@@ -95,15 +99,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.URL.Path {
 	case "/", "/events", "/settings", "/power", "/history", "/security":
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", 405)
+		if !requireMethod(w, r, http.MethodGet) {
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = page.Execute(w, viewData{Page: r.URL.Path, CSRF: csrf})
-	case "/assets/app.css", "/assets/app.js":
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", 405)
+	case "/assets/app.css":
+		// GET is served before the session check; other methods are refused.
+		requireMethod(w, r, http.MethodGet)
+	case "/assets/app.js", "/assets/common.js":
+		if !requireMethod(w, r, http.MethodGet) {
 			return
 		}
 		b, err := static.ReadFile(strings.TrimPrefix(r.URL.Path, "/"))
@@ -111,172 +116,43 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.NotFound(w, r)
 			return
 		}
-		if strings.HasSuffix(r.URL.Path, ".css") {
-			w.Header().Set("Content-Type", "text/css; charset=utf-8")
-		} else {
-			w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
-		}
+		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 		_, _ = w.Write(b)
 	case "/api/status":
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", 405)
+		if !requireMethod(w, r, http.MethodGet) {
 			return
 		}
 		respondJSON(w, h.Monitor.Snapshot())
 	case "/api/firmware":
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		if !requireMethod(w, r, http.MethodGet) {
 			return
 		}
 		status := h.Monitor.Snapshot()
 		respondJSON(w, firmware.Check(status.Current))
 	case "/api/events", "/api/events.csv", "/api/report":
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", 405)
-			return
-		}
-		days, ok := queryInt(r, "days", 30, 0, 36500)
-		if !ok {
-			http.Error(w, "invalid days", 400)
-			return
-		}
-		limit, ok := queryInt(r, "limit", 100, 1, 500)
-		if !ok {
-			http.Error(w, "invalid limit", 400)
-			return
-		}
-		history, err := events.ReadHistory(h.Logs, days, limit, time.Now())
-		if err != nil {
-			http.Error(w, "failed to read event history", 500)
-			return
-		}
-		if r.URL.Path == "/api/report" {
-			respondJSON(w, history.Report)
-		} else if r.URL.Path == "/api/events.csv" {
-			w.Header().Set("Content-Type", "text/csv; charset=utf-8")
-			w.Header().Set("Content-Disposition", `attachment; filename="apc-ups-bridge-events.csv"`)
-			csvWriter := csv.NewWriter(w)
-			_ = csvWriter.Write([]string{"timestamp_utc", "event", "level", "details_json"})
-			for _, ev := range history.Events {
-				details, _ := json.Marshal(ev.Details)
-				_ = csvWriter.Write([]string{ev.Time.UTC().Format(time.RFC3339), excelSafe(ev.Type), excelSafe(ev.Level), excelSafe(string(details))})
-			}
-			csvWriter.Flush()
-		} else {
-			respondJSON(w, history.Events)
-		}
+		h.eventsRoute(w, r)
 	case "/api/settings":
-		if r.Method == http.MethodGet {
-			respondJSON(w, h.Config.Get())
-			return
-		}
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", 405)
-			return
-		}
-		if !csrfValid(r, csrf) {
-			http.Error(w, "invalid CSRF token", 403)
-			return
-		}
-		r.Body = http.MaxBytesReader(w, r.Body, 4096)
-		var value config.Settings
-		decoder := json.NewDecoder(r.Body)
-		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(&value); err != nil {
-			http.Error(w, "invalid settings", 400)
-			return
-		}
-		if err := decoder.Decode(&struct{}{}); err != io.EOF {
-			http.Error(w, "unexpected extra data", 400)
-			return
-		}
-		if err := h.Config.Save(value); err != nil {
-			http.Error(w, err.Error(), 400)
-			return
-		}
-		respondJSON(w, h.Config.Get())
+		h.settingsRoute(w, r, csrf)
 	case "/api/power":
-		if h.Power == nil {
-			http.Error(w, "power automation unavailable", http.StatusServiceUnavailable)
-			return
-		}
-		if r.Method == http.MethodGet {
-			respondJSON(w, h.PowerConfig())
-			return
-		}
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", 405)
-			return
-		}
-		if !csrfValid(r, csrf) {
-			http.Error(w, "invalid CSRF token", 403)
-			return
-		}
-		r.Body = http.MaxBytesReader(w, r.Body, 32768)
-		var value power.Config
-		decoder := json.NewDecoder(r.Body)
-		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(&value); err != nil {
-			http.Error(w, "invalid power rules", 400)
-			return
-		}
-		if err := decoder.Decode(&struct{}{}); err != io.EOF {
-			http.Error(w, "unexpected extra data", 400)
-			return
-		}
-		if err := h.Power.UpdateConfig(value); err != nil {
-			http.Error(w, err.Error(), 400)
-			return
-		}
-		if h.Status != nil {
-			h.Status.Nudge()
-		}
-		respondJSON(w, h.PowerConfig())
+		h.powerConfigRoute(w, r, csrf)
 	case "/api/power/host-settings":
-		if r.Method != http.MethodPost { http.Error(w,"method not allowed",405); return }
-		if !csrfValid(r,csrf) { http.Error(w,"invalid CSRF token",403); return }
-		r.Body=http.MaxBytesReader(w,r.Body,1024)
-		var v hostsettings.Settings
-		dec:=json.NewDecoder(r.Body);dec.DisallowUnknownFields()
-		if dec.Decode(&v)!=nil || dec.Decode(&struct{}{})!=io.EOF { http.Error(w,"invalid shutdown settings",400); return }
-		if err:=v.Validate();err!=nil{http.Error(w,err.Error(),400);return}
-		if v.Managed {
-			ups:=h.Monitor.Snapshot()
-			if !ups.Healthy || ups.Current==nil || ups.Current.Power!=apc.Online {
-				http.Error(w,"UPS is not confirmed ONLINE; shutdown settings cannot be changed",409);return
-			}
-		}
-		ctx,cancel:=context.WithTimeout(r.Context(),50*time.Second)
-		defer cancel()
-		_=http.NewResponseController(w).SetWriteDeadline(time.Now().Add(55*time.Second))
-		result,err:=applyHostSettings(ctx,v)
-		if err!=nil {http.Error(w,"Local apcupsd settings service unavailable: "+err.Error(),503);return}
-		if result.Error!="" {http.Error(w,result.Error,409);return}
-		respondJSON(w,result)
+		h.hostSettingsRoute(w, r, csrf)
 	case "/api/power/host-thresholds":
-		if r.Method != http.MethodGet { http.Error(w, "method not allowed", 405); return }
+		if !requireMethod(w, r, http.MethodGet) {
+			return
+		}
 		respondJSON(w, hostShutdownSettings())
 	case "/api/power/test-ssh":
-		if r.Method != http.MethodPost { http.Error(w, "method not allowed", 405); return }
-		if !csrfValid(r, csrf) { http.Error(w, "invalid CSRF token", 403); return }
-		r.Body = http.MaxBytesReader(w, r.Body, 1024)
-		var req struct { ID string `json:"id"` }
-		decoder := json.NewDecoder(r.Body)
-		decoder.DisallowUnknownFields()
-		if decoder.Decode(&req) != nil || decoder.Decode(&struct{}{}) != io.EOF || req.ID == "" {
-			http.Error(w, "invalid saved device ID", 400); return
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-		defer cancel()
-		result, found := h.testSavedSSH(ctx, req.ID)
-		if !found { http.Error(w, "saved device not found", 404); return }
-		respondJSON(w, result)
+		h.testSSHRoute(w, r, csrf)
 	case "/api/power/ssh-key":
-		if r.Method != http.MethodGet { http.Error(w, "method not allowed", 405); return }
-		respondJSON(w, struct { Keys []power.SSHPublicKey `json:"keys"` }{power.ServicePublicKeys()})
+		if !requireMethod(w, r, http.MethodGet) {
+			return
+		}
+		respondJSON(w, struct {
+			Keys []power.SSHPublicKey `json:"keys"`
+		}{power.ServicePublicKeys()})
 	case "/api/power/state":
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", 405)
+		if !requireMethod(w, r, http.MethodGet) {
 			return
 		}
 		if h.Power == nil {
@@ -285,43 +161,179 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		respondJSON(w, h.Power.View())
 	case "/change-password":
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", 405)
-			return
-		}
-		if !csrfValid(r, csrf) {
-			http.Error(w, "invalid CSRF token", 403)
-			return
-		}
-		r.Body = http.MaxBytesReader(w, r.Body, 4096)
-		if err := r.ParseForm(); err != nil {
-			http.Error(w, "bad request", 400)
-			return
-		}
-		if err := h.Auth.ChangePassword(r.PostFormValue("old"), r.PostFormValue("new")); err != nil {
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			w.WriteHeader(400)
-			_ = page.Execute(w, viewData{Page: "/settings", CSRF: csrf, Error: "Current password incorrect or new password invalid (minimum 12 characters)."})
-			return
-		}
-		h.Auth.Logout(token)
-		clearCookie(w, r)
-		http.Redirect(w, r, "/login?changed=1", http.StatusSeeOther)
+		h.changePasswordRoute(w, r, token, csrf)
 	case "/logout":
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", 405)
-			return
-		}
-		if !csrfValid(r, csrf) {
-			http.Error(w, "invalid CSRF token", 403)
+		if !requireMethod(w, r, http.MethodPost) || !requireCSRF(w, r, csrf) {
 			return
 		}
 		h.Auth.Logout(token)
-		clearCookie(w, r)
+		setSessionCookie(w, r, "", -1)
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// eventsRoute serves the event list, its CSV export and the summary report.
+func (h *Handler) eventsRoute(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
+	days, ok := queryInt(r, "days", 30, 0, 36500)
+	if !ok {
+		http.Error(w, "invalid days", 400)
+		return
+	}
+	limit, ok := queryInt(r, "limit", 100, 1, 500)
+	if !ok {
+		http.Error(w, "invalid limit", 400)
+		return
+	}
+	hist, err := events.ReadHistory(h.Logs, days, limit, time.Now())
+	if err != nil {
+		http.Error(w, "failed to read event history", 500)
+		return
+	}
+	switch r.URL.Path {
+	case "/api/report":
+		respondJSON(w, hist.Report)
+	case "/api/events.csv":
+		writeEventsCSV(w, hist.Events)
+	default:
+		respondJSON(w, hist.Events)
+	}
+}
+
+func writeEventsCSV(w http.ResponseWriter, evs []events.Event) {
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="apc-ups-bridge-events.csv"`)
+	csvWriter := csv.NewWriter(w)
+	_ = csvWriter.Write([]string{"timestamp_utc", "event", "level", "details_json"})
+	for _, ev := range evs {
+		details, _ := json.Marshal(ev.Details)
+		_ = csvWriter.Write([]string{ev.Time.UTC().Format(time.RFC3339), excelSafe(ev.Type), excelSafe(ev.Level), excelSafe(string(details))})
+	}
+	csvWriter.Flush()
+}
+
+func (h *Handler) settingsRoute(w http.ResponseWriter, r *http.Request, csrf string) {
+	if r.Method == http.MethodGet {
+		respondJSON(w, h.Config.Get())
+		return
+	}
+	if !requireMethod(w, r, http.MethodPost) || !requireCSRF(w, r, csrf) {
+		return
+	}
+	var value config.Settings
+	if err := decodeStrict(w, r, 4096, &value); err != nil {
+		http.Error(w, bodyErrorText(err, "invalid settings"), 400)
+		return
+	}
+	if err := h.Config.Save(value); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	respondJSON(w, h.Config.Get())
+}
+
+func (h *Handler) powerConfigRoute(w http.ResponseWriter, r *http.Request, csrf string) {
+	if h.Power == nil {
+		http.Error(w, "power automation unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if r.Method == http.MethodGet {
+		respondJSON(w, h.Power.Config())
+		return
+	}
+	if !requireMethod(w, r, http.MethodPost) || !requireCSRF(w, r, csrf) {
+		return
+	}
+	var value power.Config
+	if err := decodeStrict(w, r, 32768, &value); err != nil {
+		http.Error(w, bodyErrorText(err, "invalid power rules"), 400)
+		return
+	}
+	if err := h.Power.UpdateConfig(value); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	if h.Status != nil {
+		h.Status.Nudge()
+	}
+	respondJSON(w, h.Power.Config())
+}
+
+func (h *Handler) hostSettingsRoute(w http.ResponseWriter, r *http.Request, csrf string) {
+	if !requireMethod(w, r, http.MethodPost) || !requireCSRF(w, r, csrf) {
+		return
+	}
+	var v hostsettings.Settings
+	if decodeStrict(w, r, 1024, &v) != nil {
+		http.Error(w, "invalid shutdown settings", 400)
+		return
+	}
+	if err := v.Validate(); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	if v.Managed && !h.onlineConfirmed() {
+		http.Error(w, "UPS is not confirmed ONLINE; shutdown settings cannot be changed", 409)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 50*time.Second)
+	defer cancel()
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(55 * time.Second))
+	result, err := applyHostSettings(ctx, v)
+	if err != nil {
+		http.Error(w, "Local apcupsd settings service unavailable: "+err.Error(), 503)
+		return
+	}
+	if result.Error != "" {
+		http.Error(w, result.Error, 409)
+		return
+	}
+	respondJSON(w, result)
+}
+
+func (h *Handler) testSSHRoute(w http.ResponseWriter, r *http.Request, csrf string) {
+	if !requireMethod(w, r, http.MethodPost) || !requireCSRF(w, r, csrf) {
+		return
+	}
+	var req struct {
+		ID string `json:"id"`
+	}
+	if decodeStrict(w, r, 1024, &req) != nil || req.ID == "" {
+		http.Error(w, "invalid saved device ID", 400)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	result, found := h.testSavedSSH(ctx, req.ID)
+	if !found {
+		http.Error(w, "saved device not found", 404)
+		return
+	}
+	respondJSON(w, result)
+}
+
+func (h *Handler) changePasswordRoute(w http.ResponseWriter, r *http.Request, token, csrf string) {
+	if !requireMethod(w, r, http.MethodPost) || !requireCSRF(w, r, csrf) {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad request", 400)
+		return
+	}
+	if err := h.Auth.ChangePassword(r.PostFormValue("old"), r.PostFormValue("new")); err != nil {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(400)
+		_ = page.Execute(w, viewData{Page: "/settings", CSRF: csrf, Error: "Current password incorrect or new password invalid (minimum 12 characters)."})
+		return
+	}
+	h.Auth.Logout(token)
+	setSessionCookie(w, r, "", -1)
+	http.Redirect(w, r, "/login?changed=1", http.StatusSeeOther)
 }
 
 // Prefix formula-like cells to prevent spreadsheet execution on CSV open.
@@ -344,7 +356,7 @@ func respondJSON(w http.ResponseWriter, value any) {
 	_ = json.NewEncoder(w).Encode(value)
 }
 func (h *Handler) session(r *http.Request) (string, string, bool) {
-	c, err := r.Cookie("ups_bridge_session")
+	c, err := r.Cookie(sessionCookieName)
 	if err != nil {
 		return "", "", false
 	}
@@ -358,8 +370,10 @@ func csrfValid(r *http.Request, expected string) bool {
 	}
 	return actual != "" && subtle.ConstantTimeCompare([]byte(actual), []byte(expected)) == 1
 }
-func clearCookie(w http.ResponseWriter, r *http.Request) {
-	http.SetCookie(w, &http.Cookie{Name: "ups_bridge_session", Value: "", Path: "/", HttpOnly: true, Secure: r.TLS != nil, SameSite: http.SameSiteStrictMode, MaxAge: -1})
+
+// setSessionCookie sets (or, with maxAge -1, clears) the session cookie.
+func setSessionCookie(w http.ResponseWriter, r *http.Request, value string, maxAge int) {
+	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: value, Path: "/", HttpOnly: true, Secure: r.TLS != nil, SameSite: http.SameSiteStrictMode, MaxAge: maxAge})
 }
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
@@ -371,8 +385,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		_ = login.Execute(w, data)
 		return
 	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", 405)
+	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 8192)
@@ -389,7 +402,9 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		if ip := net.ParseIP(addr); ip != nil && errors.Is(err, auth.ErrCredentials) {
 			log.Printf(authFailureLogFormat, ip.String())
 		}
-		if errors.Is(err, auth.ErrSuspicious) && h.Mail != nil { go h.Mail.SendSecurityWarning() }
+		if errors.Is(err, auth.ErrSuspicious) && h.Mail != nil {
+			go h.Mail.SendSecurityWarning()
+		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if !errors.Is(err, auth.ErrCredentials) && strings.Contains(err.Error(), "too many") {
 			w.WriteHeader(http.StatusTooManyRequests)
@@ -399,20 +414,70 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		_ = login.Execute(w, viewData{Error: "Invalid credentials or too many attempts. Try again later."})
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: "ups_bridge_session", Value: token, Path: "/", HttpOnly: true, Secure: r.TLS != nil, SameSite: http.SameSiteStrictMode, MaxAge: int((8 * time.Hour).Seconds())})
+	setSessionCookie(w, r, token, int(sessionLifetime.Seconds()))
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
-func (h *Handler) PowerConfig() power.Config { return h.Power.Config() }
-
 // New creates a handler with no listener and no background goroutines.
-func New(mon *monitor.Monitor, a *auth.Store, c *config.Store, logs string, powers ...*power.Controller) (http.Handler, error) {
+func New(mon *monitor.Monitor, a *auth.Store, c *config.Store, logs string, p *power.Controller) (*Handler, error) {
 	if mon == nil || a == nil || c == nil {
 		return nil, fmt.Errorf("monitor, authentication and settings are required")
 	}
-	h := &Handler{Monitor: mon, Auth: a, Config: c, Logs: logs}
-	if len(powers) > 0 {
-		h.Power = powers[0]
+	return &Handler{Monitor: mon, Auth: a, Config: c, Logs: logs, Power: p, Fail2banLog: defaultFail2banLog}, nil
+}
+
+const (
+	sessionCookieName = "ups_bridge_session"
+	sessionLifetime   = 8 * time.Hour
+)
+
+// requireMethod answers 405 and returns false unless the request uses method.
+func requireMethod(w http.ResponseWriter, r *http.Request, method string) bool {
+	if r.Method != method {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return false
 	}
-	return h, nil
+	return true
+}
+
+// requireCSRF answers 403 and returns false unless the request carries csrf.
+func requireCSRF(w http.ResponseWriter, r *http.Request, csrf string) bool {
+	if !csrfValid(r, csrf) {
+		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		return false
+	}
+	return true
+}
+
+var errTrailingData = errors.New("unexpected extra data")
+
+// decodeStrict reads one JSON value of at most limit bytes into dst, rejecting
+// unknown fields and anything after the value. Callers word their own 400
+// reply; bodyErrorText gives the usual one.
+func decodeStrict(w http.ResponseWriter, r *http.Request, limit int64, dst any) error {
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(dst); err != nil {
+		return err
+	}
+	if decoder.Decode(&struct{}{}) != io.EOF {
+		return errTrailingData
+	}
+	return nil
+}
+
+// bodyErrorText is the 400 text for a decodeStrict failure: invalid when the
+// value itself was bad, a fixed message when extra data followed it.
+func bodyErrorText(err error, invalid string) string {
+	if errors.Is(err, errTrailingData) {
+		return errTrailingData.Error()
+	}
+	return invalid
+}
+
+// onlineConfirmed reports whether the UPS is healthy and running on mains power.
+func (h *Handler) onlineConfirmed() bool {
+	s := h.Monitor.Snapshot()
+	return s.Healthy && s.Current != nil && s.Current.Power == apc.Online
 }

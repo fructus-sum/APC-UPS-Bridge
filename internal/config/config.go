@@ -3,11 +3,10 @@
 package config
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sync"
+
+	"github.com/fructus-sum/APC-UPS-Bridge/internal/fileutil"
 )
 
 // MaxPollIntervalSeconds bounds the polling interval: shutdown decisions are
@@ -45,16 +44,16 @@ func Open(path string, defaults Settings, notify func(Settings)) (*Store, error)
 		return nil, err
 	}
 	s := &Store{path: path, value: defaults, notify: notify}
-	b, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
+	var v Settings
+	found, err := fileutil.ReadJSON(path, &v)
+	if !found && err == nil {
 		return s, nil
 	}
 	if err != nil {
+		if found {
+			err = fmt.Errorf("invalid preferences: %w", err)
+		}
 		return nil, err
-	}
-	var v Settings
-	if err = json.Unmarshal(b, &v); err != nil {
-		return nil, fmt.Errorf("invalid preferences: %w", err)
 	}
 	// Older settings files allowed up to 3600 seconds; clamp rather than refuse to start.
 	if v.PollIntervalSeconds > MaxPollIntervalSeconds {
@@ -73,11 +72,7 @@ func (s *Store) Save(v Settings) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	data, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
-		return err
-	}
-	if err = atomicWrite(s.path, append(data, '\n')); err != nil {
+	if err := fileutil.WriteJSONAtomic(s.path, v, 0600); err != nil {
 		return err
 	}
 	s.value = v
@@ -85,32 +80,4 @@ func (s *Store) Save(v Settings) error {
 		s.notify(v)
 	}
 	return nil
-}
-func atomicWrite(path string, data []byte) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return err
-	}
-	f, err := os.CreateTemp(dir, ".prefs-*")
-	if err != nil {
-		return err
-	}
-	tmp := f.Name()
-	defer os.Remove(tmp)
-	if err = f.Chmod(0600); err != nil {
-		f.Close()
-		return err
-	}
-	if _, err = f.Write(data); err != nil {
-		f.Close()
-		return err
-	}
-	if err = f.Sync(); err != nil {
-		f.Close()
-		return err
-	}
-	if err = f.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
 }

@@ -1,16 +1,9 @@
 'use strict';
 const el = id => document.getElementById(id);
 const page = document.querySelector('meta[name="page"]')?.content;
-const csrf = document.querySelector('meta[name="csrf-token"]')?.content;
 const dateText = text => text ? new Date(text).toLocaleString() : '—';
 const numeric = (value, suffix, digits=0) => typeof value === 'number' ? value.toFixed(digits) + suffix : 'Not reported';
 const humanDuration = seconds => seconds >= 3600 ? (seconds/3600).toFixed(1) + ' h' : seconds >= 60 ? Math.round(seconds/60) + ' min' : seconds + ' sec';
-async function getJSON(path) {
- const res = await fetch(path, {cache:'no-store',credentials:'same-origin'});
- if (res.status === 401) { location.assign('/login'); throw new Error('Session expired'); }
- if (!res.ok) throw new Error('Request failed (' + res.status + ')');
- return res.json();
-}
 function makeTimeline(root,events) {
  root.replaceChildren();
  if (!events.length) {const p=document.createElement('p');p.className='muted';p.textContent='No events recorded in this period.';root.append(p);return;}
@@ -99,8 +92,7 @@ async function startSettings(){
   event.preventDefault();const feedback=el('settings-feedback');feedback.textContent='Saving…';
   const value={poll_interval_seconds:Number(el('poll').value),low_battery_percent:Number(el('low').value),retention_days:Number(el('retention').value)};
   try{
-   const res=await fetch('/api/settings',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(value)});
-   if (!res.ok) throw new Error(await res.text());
+   await postJSON('/api/settings',value);
    feedback.textContent='Settings saved and applied.';
   }catch(e){feedback.textContent='Could not save: '+e.message;}
  });
@@ -121,8 +113,7 @@ function startHostSettings(){
   const settings={managed:mode.value==='managed',battery_percent:Number(el('host-setting-battery').value),runtime_minutes:Number(el('host-setting-minutes').value),timeout_minutes:Number(el('host-setting-timeout').value)};
   if(settings.managed&&!window.confirm('Apply the Pi shutdown thresholds ('+settings.battery_percent+'% charge, '+settings.runtime_minutes+' min runtime, '+(settings.timeout_minutes?settings.timeout_minutes+' min on battery':'on-battery timer off')+') and restart apcupsd? This does not change remote machine shutdown rules.')){feedback.textContent='Not applied.';return;}
   try{
-   const response=await fetch('/api/power/host-settings',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(settings)});
-   if(!response.ok)throw new Error((await response.text()).trim());
+   const response=await postJSON('/api/power/host-settings',settings);
    const reply=await response.json();feedback.textContent=reply.message||'Settings updated.';
   }catch(e){feedback.textContent='Unable to apply Pi settings: '+e.message;}
  });
@@ -191,8 +182,7 @@ function addDevice(data={}){
   const id=section.querySelector('[data-key="id"]').value;
   test.disabled=true;status.textContent='Checking saved SSH connection…';
   try{
-   const response=await fetch('/api/power/test-ssh',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({id})});
-   if(!response.ok)throw new Error((await response.text()).trim());
+   const response=await postJSON('/api/power/test-ssh',{id});
    const result=await response.json();status.textContent=(result.status==='ready'?'✓ ':result.status==='warning'?'⚠ ':'✕ ')+result.message+(result.status==='error'?' If the key may be the cause, see “SSH key for remote hosts” above.':'');
   }catch(e){status.textContent='Test unavailable: '+e.message+' Save this device first, then retry.';}
   finally{test.disabled=false;}
@@ -243,8 +233,7 @@ async function startPower(){
  ev.preventDefault();feedback.textContent='Validating…';
  const v={enabled:el('power-enabled').checked,shutdown_battery_percent:Number(el('shutdown-percent').value),shutdown_runtime_minutes:Number(el('shutdown-runtime').value),on_battery_delay_seconds:Number(el('outage-delay').value),recovery_battery_percent:Number(el('recovery-percent').value),recovery_stable_seconds:Number(el('recovery-delay').value),devices:collectDevices()};
  if(v.enabled&&!window.confirm('Enable automated SSH shutdown for approved devices when the UPS crosses the configured threshold?')){feedback.textContent='Not saved.';return;}
- try{const res=await fetch('/api/power',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},credentials:'same-origin',body:JSON.stringify(v)});
- if(!res.ok)throw new Error((await res.text()).trim());feedback.textContent='Power configuration saved.';
+ try{await postJSON('/api/power',v);feedback.textContent='Power configuration saved.';
  for(const s of el('device-list').querySelectorAll('.device')){s.dataset.saved='1';s.querySelector('details.device-details').open=false;}
  refreshPowerState();refreshDeviceStatus();
  }catch(e){
@@ -252,12 +241,12 @@ async function startPower(){
   for(const d of el('device-list').querySelectorAll('details.device-details'))d.open=true;
  }
  });
- refreshPowerState();setInterval(refreshPowerState,10000);
- refreshDeviceStatus();setInterval(refreshDeviceStatus,10000);
+ refreshPowerState();every(10000,refreshPowerState);
+ refreshDeviceStatus();every(10000,refreshDeviceStatus);
 }
-if(page==='/'){const guide=el('battery-test-guide');if(guide)guide.addEventListener('click',()=>{const panel=el('battery-test-instructions');if(!panel.hidden){panel.hidden=true;return;}if(window.confirm('This test can run your connected equipment on battery power and could switch it off if the battery is weak. While the UPS service is stopped, monitoring and automatic Pi shutdown are paused. Only continue if someone is present and the mains power is normal. Show the steps?'))panel.hidden=false;});refreshDashboard();refreshFirmware();refreshRecent();refreshPowerState();setInterval(refreshDashboard,10000);setInterval(refreshFirmware,60000);setInterval(refreshRecent,60000);setInterval(refreshPowerState,10000);refreshDeviceStatus();setInterval(refreshDeviceStatus,10000);}
+if(page==='/'){const guide=el('battery-test-guide');if(guide)guide.addEventListener('click',()=>{const panel=el('battery-test-instructions');if(!panel.hidden){panel.hidden=true;return;}if(window.confirm('This test can run your connected equipment on battery power and could switch it off if the battery is weak. While the UPS service is stopped, monitoring and automatic Pi shutdown are paused. Only continue if someone is present and the mains power is normal. Show the steps?'))panel.hidden=false;});refreshDashboard();refreshFirmware();refreshRecent();refreshPowerState();every(10000,refreshDashboard);every(60000,refreshFirmware);every(60000,refreshRecent);every(10000,refreshPowerState);refreshDeviceStatus();every(10000,refreshDeviceStatus);}
 if(page==='/events'){refreshEvents();el('range').addEventListener('change',refreshEvents);el('refresh-events').addEventListener('click',refreshEvents);}
-if(page==='/settings'){startSettings();startHostSettings();refreshFirmware();setInterval(refreshFirmware,60000);}
+if(page==='/settings'){startSettings();startHostSettings();refreshFirmware();every(60000,refreshFirmware);}
 
 if(page==='/power')startPower();
 

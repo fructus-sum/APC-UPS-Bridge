@@ -8,19 +8,21 @@ import (
 	"fmt"
 	"math"
 	"net"
-	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/apc"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/events"
+	"github.com/fructus-sum/APC-UPS-Bridge/internal/fileutil"
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/monitor"
 )
 
 // alertCooldown is the minimum gap between attempted start/restore alerts within
 // one incident, so flapping mains cannot flood the mailbox.
 const alertCooldown = 10 * time.Minute
+
+const errGatewayUnreachable = "SMTP gateway unreachable; report retained"
 
 // Target identifies a system that must become SSH-reachable before the summary.
 // Host identity is captured at outage time and survives Pi reboots.
@@ -62,6 +64,19 @@ type State struct {
 	LastReportID string    `json:"last_report_id,omitempty"`
 	LastReportAt time.Time `json:"last_report_at,omitempty"`
 }
+// ReportPending reports whether the state file at statePath holds an incident
+// whose report has not been sent yet. A missing file means nothing is pending;
+// an unreadable or corrupt file is treated as pending so callers fail safe.
+func ReportPending(statePath string) bool {
+	var s struct {
+		Current json.RawMessage `json:"current"`
+	}
+	if _, err := fileutil.ReadJSON(statePath, &s); err != nil {
+		return true
+	}
+	return len(s.Current) > 0 && string(s.Current) != "null"
+}
+
 type Status struct {
 	Enabled      bool      `json:"enabled"`
 	Pending      bool      `json:"pending"`
@@ -101,14 +116,12 @@ func Open(store *Store, statePath, logDir string, writer events.Writer, sender S
 		return nil, fmt.Errorf("email engine missing dependencies")
 	}
 	e := &Engine{store: store, path: statePath, logs: logDir, writer: writer, sender: sender, probe: TCPProbe, hosts: checkHosts, now: time.Now}
-	b, err := os.ReadFile(statePath)
-	if err != nil && !os.IsNotExist(err) {
-		return nil, err
+	found, err := fileutil.ReadJSON(statePath, &e.state)
+	if found && err != nil {
+		err = fmt.Errorf("invalid saved email outage report: %w", err)
 	}
-	if err == nil {
-		if err = json.Unmarshal(b, &e.state); err != nil {
-			return nil, fmt.Errorf("invalid saved email outage report: %w", err)
-		}
+	if err != nil {
+		return nil, err
 	}
 	if e.state.Current != nil {
 		if e.state.Current.ID == "" || len(e.state.Current.Periods) == 0 {
@@ -153,11 +166,7 @@ func (e *Engine) SaveConfig(c Config) error {
 	return nil
 }
 func (e *Engine) persist() error {
-	b, err := json.MarshalIndent(e.state, "", "  ")
-	if err != nil {
-		return err
-	}
-	return atomicWrite(e.path, append(b, '\n'))
+	return fileutil.WriteJSONAtomic(e.path, e.state, 0600)
 }
 func (e *Engine) log(typ, level string, details map[string]any) {
 	_ = e.writer.Write(events.Event{Time: e.now().UTC(), Type: typ, Level: level, Details: details})
@@ -277,8 +286,8 @@ func (e *Engine) Observe(ctx context.Context, s monitor.Status, targets []Target
 		return nil
 	}
 	if err := e.probe(ctx, cfg); err != nil {
-		if i.LastError != "SMTP gateway unreachable; report retained" {
-			i.LastError = "SMTP gateway unreachable; report retained"
+		if i.LastError != errGatewayUnreachable {
+			i.LastError = errGatewayUnreachable
 			_ = e.persist()
 			e.log("email_summary_queued", "info", map[string]any{"incident": i.ID})
 		}
@@ -394,7 +403,7 @@ func (e *Engine) summary(i *Incident, now time.Time) (string, string) {
 		var details = map[string]any{}
 		for key, value := range ev.Details {
 			switch key {
-			case "battery_percent", "load_percent", "runtime_minutes", "remaining_minutes", "duration_seconds", "duration_minutes", "retry", "count", "sequence", "priority":
+			case events.DetailBatteryPercent, "load_percent", events.DetailRuntimeMinutes, "remaining_minutes", "duration_seconds", "duration_minutes", "retry", "count", "sequence", "priority":
 				switch value.(type) {
 				case int, int64, float64, bool:
 					details[key] = value

@@ -1,45 +1,51 @@
-# Email alerts and recovery reports
+# Email notifications
 
-This feature is implemented and covered by simulated tests. Delivery with individual SMTP providers and physical Pi/UPS interruption scenarios still requires verification on the target installation.
+APC UPS Bridge can email you when the power goes out, when it returns, and once everything has recovered. Email never delays a shutdown of your devices and is never needed for power recovery. No extra mail server or open port is installed.
 
-## Purpose
+## Set up email
 
-The bridge may lose internet access during an outage. Sending email must never delay remote shutdown or be required for power recovery. A single low-overhead email worker processes UPS observations independently of the monitoring and protection loop. No database, SMTP server or extra listening port is installed.
+1. Sign in and open **Email notifications**.
+2. Enter your provider's **SMTP hostname** and **SMTP port**. Choose **STARTTLS (usually port 587)** or **Implicit TLS (usually port 465)** under **Transport encryption**. An encrypted connection is required; there is no unencrypted option.
+3. Enter the **Login / account** and the **SMTP app password**. The password is not shown again after saving. Leave the field blank to keep the saved one. Use a dedicated mail account with an app password if your provider offers one. Providers that only allow OAuth sign-in are not supported.
+4. Enter a **From email** and a **Send reports to** address. Each must be a single plain address.
+5. Tick **Enable outgoing email** and select **Save email settings**.
+6. While the power is on, select **Send test email (while on mains)** and check that it arrives and is not filtered as spam.
 
-## Configure SMTP
+The page shows the current state (Enabled or Disabled) and the status of the recovery report.
 
-1. Sign in as administrator and open **Email notifications**.
-2. Enter your provider's SMTP hostname and port, choose **STARTTLS** (usually 587) or **implicit TLS** (usually 465), and enter the SMTP login and app-specific password. SMTP AUTH PLAIN over authenticated TLS is required; providers requiring OAuth-only authentication are not yet supported.
-3. Set a plain sender and recipient email address, then enable email and save.
-4. While mains power is verified, use **Send test email**. Verify sender authorization and spam filtering.
-5. Configure the remote devices under **Power rules & devices**. When **Wait for devices** is checked, each shutdown-enabled device must accept a TCP connection on its configured SSH port. This is a *reachability test*, **not** proof that applications or services have fully recovered.
+## What you will receive
 
-The SMTP password is held in `/var/lib/apc-ups-bridge/email.json` with `0600` permissions, never sent in subsequent GET API responses. Submitting an empty password keeps the existing saved secret. The email account should be dedicated to this application, ideally using an app password. Enable HTTPS or a trusted VPN before using the web UI outside a trusted host.
+- **Power outage:** one email when the bridge first sees the UPS switch to battery. If the Pi starts up while already on battery, the email says the true start time is unknown.
+- **Power restored:** one email when mains returns, for outages whose start email was attempted.
+- **Final recovery report:** one email once everything has recovered (see below). It lists every interruption, the lowest battery level, service restarts, gaps in monitoring, the protected devices by name and recent power events. It leaves out addresses and ports.
+- **Login security warning:** one email when a fifth failed sign-in within 10 minutes comes from the same address. At most one is sent per hour, and it contains no addresses. See [Login security](LOGIN-SECURITY.md).
 
-## Notification sequence
+Outage and restored emails are tried once and are not retried, so a lost internet connection cannot cause a pile-up. If the power flickers, a new outage email is held back until 10 minutes after the previous email. A short interruption that ends inside that time gets no email of its own but still appears in the final report.
 
-- **On battery:** on first detected loss of mains, try one outage email. If the Pi boots to ONBATT without prior observation, the alert explicitly says the true start time is unknown. Each detected interruption normally has its own email attempt, recorded on disk *before* contacting SMTP. A failed alert is not retried.
-- **Power restored:** when a healthy ONLINE reading first follows ONBATT, try one restoration email, but only for an interruption whose start alert was attempted. If internet is down, no alert retry is scheduled.
-- **Flapping mains (10-minute alert cooldown):** within one incident, a new start alert is held back until 10 minutes after the previous start or restoration alert was attempted. If power returns before the cooldown ends, that interruption is marked as suppressed and neither a start nor a restoration email is sent for it; it still appears in the final report. If the UPS is still on battery once the cooldown has passed, the start alert is sent then. A new outage more than 10 minutes after the last alert alerts normally.
-- **Recovery pending:** keep one incident (possibly containing multiple interruptions) and a running low-battery observation on disk, including through repeated Raspberry Pi reboots. The system does **not** count an incident complete just because power returned.
-- **Complete recovery:** only when mains is ONLINE, the reported battery percentage is **100%**, and every protected device is SSH-reachable (when configured) can the final summary be attempted. The SMTP endpoint must first accept a TCP connection. A failed reachability probe **does not send an email** and is checked at most once every 2 minutes. Temporary summary-send failures keep the report and space further attempts by at least 10 minutes. Invalid SMTP credentials block further delivery until the configuration is updated.
-- **Successful summary:** persist its delivery outcome, then end the incident. The summary includes every recorded interruption, lowest observed battery level, service restarts, observation gaps, protected hosts, and recent power-related events.
+## When the final report is sent
 
-SMTP has no generally supported exactly-once delivery guarantee: a Pi can restart after the mail relay accepts a message but before the success result is persisted, so the final summary might be delivered twice. The deterministic incident Message-ID helps identify duplicates. Individual start/restoration alerts favor at-most-once attempts to avoid alert spam during a loss of internet service.
+The bridge keeps one report open for the whole outage, including repeated power loss and Pi restarts. It sends the report only when all of these are true:
 
-## Files and retention
+- the UPS is back on mains power;
+- the UPS reports **100%** battery charge;
+- if **Wait until configured protected devices accept SSH connections before sending the final report** is ticked, every protected device accepts a connection on its SSH port;
+- your mail server can be reached.
 
-- `/var/lib/apc-ups-bridge/email.json` — protected SMTP settings and password.
-- `/var/lib/apc-ups-bridge/email-state.json` — compact durable incident and delivery state (atomic write + sync).
-- `/var/log/apc-ups-bridge/events-YYYY-MM.jsonl` — event-only log files. During a pending report, automatic retention cleanup pauses so events survive until the summary can be delivered.
+Things to know:
 
-After restart, the first observed UPS reading is reconciled with saved incident state. No outage duration is fabricated for a period when the Pi was offline; the report labels start/end timestamps as observed boundaries and flags monitoring interruptions. Power protection does not depend on SMTP and remains disabled by default.
+- A UPS that never reports 100%, or does not report battery charge at all, keeps the report waiting.
+- A device that never comes back keeps the report waiting. Untick the wait option, for example for a retired device.
+- Accepting an SSH connection shows the device is reachable, not that its applications have fully started.
+- If sending fails, it is tried again at least 10 minutes later. If the mail server rejects the login, sending stops until you update the settings.
+- The report is checked at most every 2 minutes, and nothing is sent while the UPS is on battery.
+- Mail systems cannot promise a message arrives exactly once, so after an unlucky restart the final report may arrive twice.
 
-## Limitations and fault handling
+If the Pi was switched off for a long time, some outages are never seen. Reports separate what was observed from what is estimated, and never invent an outage length for time the Pi was off.
 
-- A UPS that never reports 100% charge will retain the report until that condition is met; this is by design.
-- If a protected SSH host never becomes reachable, the report waits unless **Wait for devices** is switched off (for example for a retired device). No indefinite ping flood is used.
-- DNS, SMTP and internet failures must not block UPS polling or SSH shutdown: email operates on a separate buffered worker with short timeouts.
-- Normal UPS samples are not logged. Unexpected failures of state-file persistence are reported to service logs and the pending report is preserved rather than silently discarded.
-- If the host is powered off for long periods, some outages may never be observed. Reports explicitly distinguish observed events from estimated durations.
-- Firmware checking is a separate, read-only dashboard feature; no firmware is installed or updated.
+## For administrators
+
+- The password is stored in `/var/lib/apc-ups-bridge/email.json` with owner-only permissions and is never returned by the web interface. Use HTTPS or a trusted VPN if you open the interface beyond a trusted network.
+- The report state is kept in `/var/lib/apc-ups-bridge/email-state.json` and is written before each send, so restarts do not lose it.
+- Events are kept in `/var/log/apc-ups-bridge/events-YYYY-MM.jsonl`. While a report is pending, automatic cleanup of these files pauses.
+- Sending runs on its own worker with short timeouts, so DNS, mail or internet problems never block UPS polling or SSH shutdown. Each report has a fixed Message-ID, which helps spot a duplicate.
+- A failure to save the report state is written to the service log and the report is kept.

@@ -41,19 +41,19 @@ func ReadHistory(dir string, days, limit int, now time.Time) (History, error) {
 			return
 		}
 		switch ev.Type {
-		case "power_lost", "on_battery_detected":
+		case TypePowerLost, TypeOnBatteryDetected:
 			result.Report.Outages++
-		case "power_restored":
+		case TypePowerRestored:
 			result.Report.Restorations++
-			if sec, ok := ev.Details["observed_outage_seconds"].(float64); ok && sec >= 0 && sec < 1e9 {
+			if sec, ok := ev.Details[DetailObservedOutageSeconds].(float64); ok && sec >= 0 && sec < 1e9 {
 				result.Report.ObservedOutageSeconds += int64(sec)
 				if int64(sec) > result.Report.LongestObservedOutageSeconds {
 					result.Report.LongestObservedOutageSeconds = int64(sec)
 				}
 			}
-		case "low_battery":
+		case TypeLowBattery:
 			result.Report.LowBatteryWarnings++
-		case "ups_communication_lost":
+		case TypeUPSCommunicationLost:
 			result.Report.CommunicationFailures++
 		}
 		// Retain the bounded newest set, even if log entries were out of order.

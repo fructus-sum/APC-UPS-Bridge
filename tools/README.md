@@ -26,7 +26,9 @@ The script prompts for the Debian hostname, account name and SSH port. It create
 
 Rerunning the Pi script is safe: if key login already works it skips enrollment.
 
-In **Power rules & devices**, use the configured SSH account and port. **Use sudo -n** works either on or off. Use **Test SSH (no shutdown)**. Perform a real shutdown test only during a maintenance window.
+In **Power rules & devices**, enter the SSH account and port you configured. The account accepts exactly two shutdown commands: `shutdown -h now` (leave **Use sudo -n** off) and `sudo -n shutdown -h now` (turn **Use sudo -n** on); either works. Use **Test SSH (no shutdown)** to confirm the login. Perform a real shutdown test only during a maintenance window.
+
+**Online check:** the device's Online check only controls the status shown on the dashboard. **Ping** (the default) never touches SSH. **SSH port** connects and disconnects without logging in, which the host's SSH log may record as a connection closed before login. **Off** performs no check.
 
 ## Security and recovery
 
@@ -36,7 +38,6 @@ In **Power rules & devices**, use the configured SSH account and port. **Use sud
 - Keep the Pi's private key private. A compromised key could still shut down the Debian host.
 - If the password-disable step completes but the Pi's test fails, recover using the Debian console or an independent administrator login. Review `journalctl -u ssh` and `/etc/ssh/sshd_config`; the Debian script makes timestamped backups.
 - To revoke access, remove the user's root-owned key file under `/etc/ssh/apc-ups-bridge/authorized_keys/` on Debian, or remove the account entirely (below).
-- Anonymous raw GitHub URLs require a public repository. For a private repository, download through your authenticated GitHub session and run the scripts from the checkout.
 
 ## Remove the account
 
@@ -56,5 +57,3 @@ rm -f /etc/sudoers.d/apc-ups-bridge-<user> /etc/ssh/apc-ups-bridge/authorized_ke
 ```
 
 The shared helpers in `/usr/local/sbin/apc-ups-bridge-*` can stay; they are only usable through the sudoers rule above. The `/etc/ssh/sshd_config.apc-ups-bridge-backup-*` files can be deleted once you are satisfied.
-
-The scripts are syntax checked but have not been end-to-end tested on real Debian/Pi machines.

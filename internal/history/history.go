@@ -342,13 +342,13 @@ func backfillFromEvents(points []Bucket, gridStart time.Time, evs []events.Event
 		}
 		p := &points[idx]
 		if p.BatteryPercent == nil {
-			if n, ok := eventNumber(ev.Details, "battery_percent", 0, maxPercent); ok {
+			if n, ok := eventNumber(ev.Details, events.DetailBatteryPercent, 0, maxPercent); ok {
 				p.BatteryPercent = &n
 				p.BatteryFromEvent = true
 			}
 		}
 		if p.RuntimeMinutes == nil {
-			if n, ok := eventNumber(ev.Details, "runtime_minutes", 0, maxRuntimeMinutes); ok {
+			if n, ok := eventNumber(ev.Details, events.DetailRuntimeMinutes, 0, maxRuntimeMinutes); ok {
 				p.RuntimeMinutes = &n
 				p.RuntimeFromEvent = true
 			}
