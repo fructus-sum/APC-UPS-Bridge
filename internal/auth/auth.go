@@ -23,6 +23,7 @@ const iterations = 240000
 const sessionLifetime = 8 * time.Hour
 
 var ErrCredentials = errors.New("invalid credentials")
+var ErrSuspicious = errors.New("suspected attack after five failed logins")
 
 type record struct {
 	Scheme     string `json:"scheme"`
@@ -157,7 +158,7 @@ func (s *Store) Login(ip, username, password string) (token, csrf string, err er
 		}
 	}
 	a := s.attempts[ip]
-	if now.Sub(a.since) > 5*time.Minute {
+	if now.Sub(a.since) > 10*time.Minute {
 		a = attempt{since: now}
 	}
 	if a.count >= 6 {
@@ -166,6 +167,7 @@ func (s *Store) Login(ip, username, password string) (token, csrf string, err er
 	if username != "admin" || !verify(s.password, password) {
 		a.count++
 		s.attempts[ip] = a
+		if a.count == 5 { return "", "", ErrSuspicious }
 		return "", "", ErrCredentials
 	}
 	delete(s.attempts, ip)
@@ -190,7 +192,7 @@ func (s *Store) prune(now time.Time) {
 		}
 	}
 	for k, v := range s.attempts {
-		if now.Sub(v.since) > 5*time.Minute {
+		if now.Sub(v.since) > 10*time.Minute {
 			delete(s.attempts, k)
 		}
 	}
