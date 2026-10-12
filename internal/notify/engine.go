@@ -82,17 +82,18 @@ type Probe func(context.Context, Config) error
 type HostCheck func(context.Context, []Target) bool
 
 type Engine struct {
-	mu        sync.Mutex
-	store     *Store
-	path      string
-	logs      string
-	writer    events.Writer
-	sender    Sender
-	probe     Probe
-	hosts     HostCheck
-	now       func() time.Time
-	state     State
-	lastProbe time.Time
+	mu                sync.Mutex
+	store             *Store
+	path              string
+	logs              string
+	writer            events.Writer
+	sender            Sender
+	probe             Probe
+	hosts             HostCheck
+	now               func() time.Time
+	state             State
+	lastProbe         time.Time
+	lastSecurityAlert time.Time
 }
 
 func Open(store *Store, statePath, logDir string, writer events.Writer, sender Sender) (*Engine, error) {
@@ -327,6 +328,27 @@ func (e *Engine) attempt(ctx context.Context, c Config, subject, body, id string
 		e.log("email_alert_sent", "info", map[string]any{"kind": subject})
 	}
 }
+
+// SendSecurityWarning is best-effort and globally rate-limited to limit abuse.
+func (e *Engine) SendSecurityWarning() {
+	cfg := e.store.Get()
+	if !cfg.Enabled {
+		return
+	}
+	e.mu.Lock()
+	if e.now().Sub(e.lastSecurityAlert) < time.Hour {
+		e.mu.Unlock()
+		return
+	}
+	e.lastSecurityAlert = e.now()
+	e.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	_ = e.sender.Send(ctx, cfg, "APC UPS Bridge — Security warning",
+		"Multiple failed administrator logins suggest an attack. Check the read-only Login security page for local details. Source addresses are intentionally excluded from this email.\n",
+		makeID(e.now())+"-security")
+}
+
 func (e *Engine) summary(i *Incident, now time.Time) (string, string) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "APC UPS Bridge — Final incident report\nIncident ID: %s\nFirst detected: %s\nCompleted (UPS full / hosts verified): %s\nPower interruptions: %d\nLowest recorded battery: %s\nPi/service restarts while pending: %d\nObservation interrupted: %t\n\n", i.ID, i.CreatedAt.Format(time.RFC3339), now.Format(time.RFC3339), len(i.Periods), batteryText(i.LowestBattery), i.PiRestarts, i.ObservationInterrupted)
@@ -347,7 +369,7 @@ func (e *Engine) summary(i *Incident, now time.Time) (string, string) {
 		fmt.Fprintln(&b, "No remote systems configured")
 	}
 	for _, target := range i.Targets {
-		fmt.Fprintf(&b, "- %s (%s:%d)\n", target.Name, target.Host, target.Port)
+		fmt.Fprintf(&b, "- %s\n", target.Name)
 	}
 	fmt.Fprintln(&b, "\nRecorded events (bounded to latest 500, not routine samples):")
 	history, err := events.ReadHistory(e.logs, 0, 500, now)
@@ -367,8 +389,29 @@ func (e *Engine) summary(i *Incident, now time.Time) (string, string) {
 			break
 		}
 		fmt.Fprintf(&b, "%s %s", ev.Time.UTC().Format(time.RFC3339), ev.Type)
-		if ev.Details != nil {
-			d, _ := json.Marshal(ev.Details)
+		// Preserve useful numerical metrics and configured friendly names, but
+		// never include arbitrary event details: they may contain IP addresses.
+		var details = map[string]any{}
+		for key, value := range ev.Details {
+			switch key {
+			case "battery_percent", "load_percent", "runtime_minutes", "remaining_minutes", "duration_seconds", "duration_minutes", "retry", "count", "sequence", "priority":
+				switch value.(type) {
+				case int, int64, float64, bool:
+					details[key] = value
+				}
+			case "name", "device_name", "friendly_name":
+				if label, ok := value.(string); ok {
+					for _, target := range i.Targets {
+						if label == target.Name {
+							details[key] = label
+							break
+						}
+					}
+				}
+			}
+		}
+		if len(details) > 0 {
+			d, _ := json.Marshal(details)
 			fmt.Fprintf(&b, " %s", d)
 		}
 		fmt.Fprintln(&b)

@@ -35,6 +35,7 @@ HOST_PROTECTION=false
 NONINTERACTIVE=false
 PASSWORD_STDIN=false
 SKIP_START=false
+SKIP_FAIL2BAN=false
 # Runtime state (set by main).
 WORKDIR=''
 SOURCE_DIR=''
@@ -61,6 +62,7 @@ Usage: sudo bash scripts/install.sh [options]
   --password-stdin        Read initial admin password from stdin (one line; needs a saved script, not a pipe)
   --non-interactive       Don't ask questions; initial setup requires --password-stdin
   --skip-start            Install and enable service but do not start it immediately
+  --skip-fail2ban         Do not set up Fail2ban protection against repeated failed web logins
   --help                  Show this help
 Prompts are read from /dev/tty, so piping this script into bash works.
 The web interface is plain HTTP meant for a trusted home LAN: never port-forward it.
@@ -131,6 +133,7 @@ parse_args() {
       --password-stdin) PASSWORD_STDIN=true; shift;;
       --non-interactive) NONINTERACTIVE=true; shift;;
       --skip-start) SKIP_START=true; shift;;
+      --skip-fail2ban) SKIP_FAIL2BAN=true; shift;;
       --help|-h) usage; exit 0;;
       *) die "Unknown option $1";;
     esac
@@ -614,6 +617,16 @@ main() {
       rollback_install 'Service failed to start or stay running (is the port already used by another service?).'
       die 'Service failed; check journalctl -u apc-ups-bridge.service'
     fi
+  fi
+  # Configure the dedicated login jail on both new installs and upgrades.
+  if [[ "$SKIP_FAIL2BAN" == true ]]; then
+    info 'Skipping Fail2ban setup (--skip-fail2ban); the built-in login limit stays active.'
+  elif command -v apt-get >/dev/null 2>&1 && [[ -f "$SOURCE_DIR/scripts/setup-fail2ban.sh" ]]; then
+    if ! bash "$SOURCE_DIR/scripts/setup-fail2ban.sh" --port "${LISTEN##*:}" </dev/null; then
+      info 'WARNING: Fail2ban security setup FAILED. App rate limiting remains active; review setup-fail2ban.sh.'
+    fi
+  else
+    info 'WARNING: automatic Fail2ban setup is available on Debian-based systems only.'
   fi
   if ! install_host_helper; then
     info 'WARNING: The Pi shutdown-threshold helper could not be installed; the bridge is running, but Pi thresholds cannot be changed from the web interface. Re-run the installer to retry.'

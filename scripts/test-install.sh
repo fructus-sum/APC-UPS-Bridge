@@ -51,6 +51,8 @@ must_fail bash -c 'UPS_BRIDGE_LIB_ONLY=1 source "$1"; parse_args --version v1.0.
 must_fail bash -c 'UPS_BRIDGE_LIB_ONLY=1 source "$1"; parse_args --configure-apcupsd --skip-apcupsd-setup' _ "$ROOT/scripts/install.sh"
 must_fail bash -c 'UPS_BRIDGE_LIB_ONLY=1 source "$1"; parse_args --host-protection' _ "$ROOT/scripts/install.sh"
 must_fail bash -c 'UPS_BRIDGE_LIB_ONLY=1 source "$1"; parse_args --listen 1.2.3.4:99999' _ "$ROOT/scripts/install.sh"
+(parse_args --skip-fail2ban; [[ "$SKIP_FAIL2BAN" == true ]]) || fail '--skip-fail2ban not parsed'
+[[ "$SKIP_FAIL2BAN" == false ]] || fail 'Fail2ban setup should be on by default'
 for gone in verify_release download_release arch_name validate_version; do
   if declare -F "$gone" >/dev/null; then fail "$gone should have been removed"; fi
 done

@@ -260,3 +260,22 @@ if(page==='/events'){refreshEvents();el('range').addEventListener('change',refre
 if(page==='/settings'){startSettings();startHostSettings();refreshFirmware();setInterval(refreshFirmware,60000);}
 
 if(page==='/power')startPower();
+
+async function refreshSecurity() {
+ const status=el('security-status'),root=el('security-events');
+ if(!root)return;
+ try{
+  const result=await getJSON('/api/security/fail2ban');
+  root.replaceChildren();
+  status.textContent=result.message||'Showing recent actions.';
+  if(!result.events.length){status.textContent=result.message||'No Fail2ban actions recorded.';return;}
+  for(const entry of result.events){
+   const item=document.createElement('div');item.className='event-row';
+   const when=document.createElement('span');when.textContent=entry.time+' · ';
+   const type=document.createElement('strong');type.textContent=entry.action==='ban'?'Banned':'Unbanned';
+   const peer=document.createElement('span');peer.textContent=' · '+entry.ip;
+   item.append(when,type,peer);root.append(item);
+  }
+ }catch(err){status.textContent='Could not read Fail2ban events: '+err.message;root.replaceChildren();}
+}
+if(page==='/security'){refreshSecurity();el('refresh-security').addEventListener('click',refreshSecurity);}
