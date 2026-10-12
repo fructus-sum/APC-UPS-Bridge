@@ -394,7 +394,7 @@ func (e *Engine) summary(i *Incident, now time.Time) (string, string) {
 		var details = map[string]any{}
 		for key, value := range ev.Details {
 			switch key {
-			case "battery_percent", "load_percent", "runtime_minutes", "remaining_minutes", "duration_seconds", "duration_minutes", "retry", "count", "sequence", "priority":
+			case events.DetailBatteryPercent, "load_percent", events.DetailRuntimeMinutes, "remaining_minutes", "duration_seconds", "duration_minutes", "retry", "count", "sequence", "priority":
 				switch value.(type) {
 				case int, int64, float64, bool:
 					details[key] = value

@@ -124,7 +124,7 @@ func (m *Monitor) Poll(ctx context.Context) error {
 		m.chargeBelowFull = false
 		if !m.bad {
 			// Stay unmarked if the write fails so the event is retried next poll.
-			m.bad = record("ups_communication_lost", "warning", map[string]any{"reason": readErr.Error()})
+			m.bad = record(events.TypeUPSCommunicationLost, "warning", map[string]any{"reason": readErr.Error()})
 		}
 		if emitErr != nil {
 			return fmt.Errorf("%v; %w", readErr, emitErr)
@@ -138,13 +138,13 @@ func (m *Monitor) Poll(ctx context.Context) error {
 	m.status.LastGood = &snap
 	if m.bad {
 		// Stay marked if the write fails so the event is retried next poll.
-		m.bad = !record("ups_communication_restored", "info", nil)
+		m.bad = !record(events.TypeUPSCommunicationRestored, "info", nil)
 	}
 	if snap.Power == apc.OnBattery {
 		if !m.hasPrior || m.prior != apc.OnBattery {
-			eventType := "power_lost"
+			eventType := events.TypePowerLost
 			if !m.hasPrior || m.prior != apc.Online || m.gap {
-				eventType = "on_battery_detected"
+				eventType = events.TypeOnBatteryDetected
 			}
 			m.outageAt = now
 			m.lowest = nil
@@ -159,13 +159,13 @@ func (m *Monitor) Poll(ctx context.Context) error {
 		}
 		isLow := (snap.BatteryPercent != nil && *snap.BatteryPercent <= m.lowAt) || hasFlag(snap.Flags, "LOWBATT")
 		if isLow && !m.low {
-			record("low_battery", "warning", metricDetails(snap))
+			record(events.TypeLowBattery, "warning", metricDetails(snap))
 		}
 		m.low = isLow
 	} else if m.hasPrior && m.prior == apc.OnBattery {
 		details := metricDetails(snap)
 		if !m.outageAt.IsZero() {
-			details["observed_outage_seconds"] = int(now.Sub(m.outageAt).Seconds())
+			details[events.DetailObservedOutageSeconds] = int(now.Sub(m.outageAt).Seconds())
 		}
 		if m.lowest != nil {
 			details["lowest_observed_battery_percent"] = *m.lowest
@@ -173,7 +173,7 @@ func (m *Monitor) Poll(ctx context.Context) error {
 		if m.gap {
 			details["observation_interrupted"] = true
 		}
-		record("power_restored", "info", details)
+		record(events.TypePowerRestored, "info", details)
 		m.outageAt = time.Time{}
 		m.lowest = nil
 		m.low = false
@@ -186,7 +186,7 @@ func (m *Monitor) Poll(ctx context.Context) error {
 		if *snap.BatteryPercent <= fullChargeArmPercent {
 			m.chargeBelowFull = true
 		} else if *snap.BatteryPercent >= 100 && m.chargeBelowFull {
-			if record("battery_fully_charged", "info", metricDetails(snap)) {
+			if record(events.TypeBatteryFullyCharged, "info", metricDetails(snap)) {
 				m.chargeBelowFull = false
 			}
 		}
@@ -203,10 +203,10 @@ func (m *Monitor) emit(t time.Time, typ, level string, details map[string]any) e
 func metricDetails(s apc.Snapshot) map[string]any {
 	d := map[string]any{"status": s.Status}
 	if s.BatteryPercent != nil {
-		d["battery_percent"] = *s.BatteryPercent
+		d[events.DetailBatteryPercent] = *s.BatteryPercent
 	}
 	if s.RuntimeMinutes != nil {
-		d["runtime_minutes"] = *s.RuntimeMinutes
+		d[events.DetailRuntimeMinutes] = *s.RuntimeMinutes
 	}
 	return d
 }

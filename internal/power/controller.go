@@ -311,7 +311,7 @@ func (c *Controller) decide(s monitor.Status, emit emitFunc) (decision, error) {
 			}
 			details := map[string]any{"stable_seconds": int(stable.Seconds()), "required_battery_percent": rules.RecoveryBatteryPercent}
 			if snap.BatteryPercent != nil {
-				details["battery_percent"] = *snap.BatteryPercent
+				details[events.DetailBatteryPercent] = *snap.BatteryPercent
 			}
 			emit("power_recovery_battery_timeout", "warning", details)
 		}
