@@ -114,6 +114,33 @@ function startHostSettings(){
   }catch(e){feedback.textContent='Unable to apply Pi settings: '+e.message;}
  });
 }
+async function refreshDeviceStatuses(){
+ try {
+  const data=await getJSON('/api/power/devices/status');
+  const list=data.devices||[];
+  const dashboard=el('dashboard-remotes');
+  if(dashboard){
+   dashboard.replaceChildren();
+   if(!list.length){const p=document.createElement('p');p.className='muted';p.textContent='No remote devices configured.';dashboard.append(p);}
+   for(const dev of list){
+    const item=document.createElement('div');item.className='remote-status-item';
+    const name=document.createElement('strong');name.textContent=dev.name;
+    const status=document.createElement('span');status.className='state '+(dev.status==='online'?'ok':'error');
+    status.textContent=dev.status==='online'?'Online':'Offline (SSH unreachable)';
+    item.append(name,status);dashboard.append(item);
+   }
+  }
+  for(const section of document.querySelectorAll('#device-list .device')){
+   const id=section.querySelector('[data-key="id"]')?.value;
+   const dev=list.find(d=>d.id===id);
+   const badge=section.querySelector('.device-availability');
+   if(badge){badge.textContent=!dev?'Not yet checked':dev.status==='online'?'Online':'Offline (SSH unreachable)';badge.className='device-availability '+(dev?.status==='online'?'reachable':'unreachable');}
+  }
+ }catch(e){
+  if(el('dashboard-remotes'))el('dashboard-remotes').textContent='Remote availability unavailable.';
+  for(const badge of document.querySelectorAll('.device-availability'))badge.textContent='Status unavailable';
+ }
+}
 async function refreshPowerState(){
  try {const v=await getJSON('/api/power/state');
  const text=v.enabled ? (v.active ? 'Active: '+v.phase.replaceAll('_',' ') : (v.armed?'Armed · waiting for outage':'Enabled · not yet armed')) : 'Disabled · remote actions off';
@@ -135,9 +162,14 @@ function powerField(parent,label,key,value,type='text'){
 }
 function addDevice(data={}){
  const root=el('device-list');const section=document.createElement('section');section.className='device';
- const top=document.createElement('div');top.className='device-top';const title=document.createElement('strong');title.textContent=data.name||'New device';
- const remove=document.createElement('button');remove.type='button';remove.textContent='Remove';remove.className='secondary';remove.addEventListener('click',()=>section.remove());top.append(title,remove);section.append(top);
- const fields=document.createElement('div');fields.className='device-fields';section.append(fields);
+ const details=document.createElement('details');details.className='device-details';details.open=!data.id;
+ const top=document.createElement('div');top.className='device-top';
+ const summary=document.createElement('summary');summary.className='device-summary';
+ const title=document.createElement('strong');title.textContent=data.name||'New device';
+ const availability=document.createElement('span');availability.className='device-availability';availability.textContent=data.id?'Checking…':'Not saved';
+ summary.append(title,availability);details.append(summary);
+ const remove=document.createElement('button');remove.type='button';remove.textContent='Remove';remove.className='secondary';remove.addEventListener('click',()=>section.remove());top.append(remove);section.append(details,top);
+ const fields=document.createElement('div');fields.className='device-fields';details.append(fields);
  const spec=[['Device ID','id','text',data.id||'node-'+Math.random().toString(36).slice(2,8)],['Friendly name','name','text',data.name||''],['IP or hostname','host','text',data.host||''],['SSH user','ssh_user','text',data.ssh_user||'root'],['SSH port','ssh_port','number',data.ssh_port??22],['Shutdown priority','priority','number',data.priority??0],['MAC address','mac','text',data.mac||''],['Wake destination IP','wake_address','text',data.wake_address||'255.255.255.255'],['Wake UDP port','wake_port','number',data.wake_port??9],['Use sudo -n','use_sudo','checkbox',data.use_sudo||false],['Allow automatic shutdown','shutdown_enabled','checkbox',data.shutdown_enabled||false],['Allow wake after shutdown','wake_enabled','checkbox',data.wake_enabled||false]];
  for(const [label,key,type,val] of spec)powerField(fields,label,key,val,type);
  const test=document.createElement('button');test.type='button';test.className='secondary';test.textContent='Test SSH (no shutdown)';
@@ -151,7 +183,10 @@ function addDevice(data={}){
    const result=await response.json();status.textContent=(result.status==='ready'?'✓ ':result.status==='warning'?'⚠ ':'✕ ')+result.message+(result.status==='error'?' If the key may be the cause, see “SSH key for remote hosts” above.':'');
   }catch(e){status.textContent='Test unavailable: '+e.message+' Save this device first, then retry.';}
   finally{test.disabled=false;}
- });section.append(test,status);
+ });details.append(test,status);
+ const nameInput=fields.querySelector('[data-key="name"]');
+ nameInput.addEventListener('input',()=>{title.textContent=nameInput.value.trim()||'New device';});
+ for(const input of fields.querySelectorAll('input'))input.addEventListener('invalid',()=>{details.open=true;});
  root.append(section);
 }
 function collectDevices(){return Array.from(el('device-list').querySelectorAll('.device')).map(section=>{
@@ -196,13 +231,15 @@ async function startPower(){
  const v={enabled:el('power-enabled').checked,shutdown_battery_percent:Number(el('shutdown-percent').value),shutdown_runtime_minutes:Number(el('shutdown-runtime').value),on_battery_delay_seconds:Number(el('outage-delay').value),recovery_battery_percent:Number(el('recovery-percent').value),recovery_stable_seconds:Number(el('recovery-delay').value),devices:collectDevices()};
  if(v.enabled&&!window.confirm('Enable automated SSH shutdown for approved devices when the UPS crosses the configured threshold?')){feedback.textContent='Not saved.';return;}
  try{const res=await fetch('/api/power',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},credentials:'same-origin',body:JSON.stringify(v)});
- if(!res.ok)throw new Error((await res.text()).trim());feedback.textContent='Power configuration saved.';refreshPowerState();
+ if(!res.ok)throw new Error((await res.text()).trim());feedback.textContent='Power configuration saved.';
+ for(const section of el('device-list').querySelectorAll('.device'))section.querySelector('details.device-details').open=false;
+ refreshPowerState();refreshDeviceStatuses();
  }catch(e){feedback.textContent='Could not save: '+e.message;}
  });
- refreshPowerState();setInterval(refreshPowerState,10000);
+ refreshPowerState();refreshDeviceStatuses();setInterval(refreshPowerState,10000);setInterval(refreshDeviceStatuses,30000);
 }
-if(page==='/'){refreshDashboard();refreshFirmware();refreshRecent();refreshPowerState();setInterval(refreshDashboard,10000);setInterval(refreshFirmware,60000);setInterval(refreshRecent,60000);setInterval(refreshPowerState,10000);}
+if(page==='/'){refreshDashboard();refreshRecent();refreshPowerState();refreshDeviceStatuses();setInterval(refreshDashboard,10000);setInterval(refreshRecent,60000);setInterval(refreshPowerState,10000);setInterval(refreshDeviceStatuses,30000);}
 if(page==='/events'){refreshEvents();el('range').addEventListener('change',refreshEvents);el('refresh-events').addEventListener('click',refreshEvents);}
-if(page==='/settings'){startSettings();startHostSettings();}
+if(page==='/settings'){startSettings();startHostSettings();refreshFirmware();setInterval(refreshFirmware,60000);}
 
 if(page==='/power')startPower();
