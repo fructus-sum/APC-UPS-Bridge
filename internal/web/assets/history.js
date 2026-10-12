@@ -47,7 +47,7 @@ function draw(root,report,series,percent){
   let path='',open=false;
   for(const p of report.points){
    const v=p[entry.key],t=new Date(p.time).getTime();
-   if(!p.observed||typeof v!=='number'||!Number.isFinite(v)){open=false;continue;}
+   if(!p.observed||typeof v!=='number'||!Number.isFinite(v)||(entry.key==='battery_percent'&&p.battery_from_event)){open=false;continue;}
    const xp=x(t).toFixed(2),yp=y(v).toFixed(2);
    path+=(open?'L':'M')+xp+' '+yp+' ';open=true;
   }
@@ -83,7 +83,7 @@ function drawBattery(report){
   let d='',continuous=false;
   for(const p of report.points){
    const v=p.runtime_minutes;
-   if(typeof v!=='number'||!Number.isFinite(v)||!p.observed){continuous=false;continue;}
+   if(typeof v!=='number'||!Number.isFinite(v)||!p.observed||p.runtime_from_event){continuous=false;continue;}
    const xp=x(p.time).toFixed(2),yp=(T+h-v/max*h).toFixed(2);
    d+=(continuous?'L':'M')+xp+' '+yp+' ';continuous=true;
   }
