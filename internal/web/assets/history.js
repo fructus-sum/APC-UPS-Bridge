@@ -77,7 +77,7 @@ function drawBattery(report){
   path+=(open?'L':'M')+x(p.time).toFixed(2)+' '+y(v).toFixed(2)+' ';open=true;
  }
  if(path)chart.append(svg('path',{d:path,fill:'none',stroke:'#4775bb','stroke-width':2,'stroke-dasharray':'5 4'}));
- const runtimeValues=report.points.map(p=>p.runtime_minutes).filter(v=>typeof v==='number'&&Number.isFinite(v));
+ const runtimeValues=report.points.map(p=>p.runtime_minutes).concat((report.events||[]).map(e=>e.details&&e.details.runtime_minutes)).filter(v=>typeof v==='number'&&Number.isFinite(v)&&v>=0&&v<=100000);
  if(runtimeValues.length){
   const max=Math.max(10,Math.ceil(Math.max(...runtimeValues)/10)*10);
   let d='',continuous=false;
