@@ -335,3 +335,33 @@ func TestSuppressedOutageAlertsOnceCooldownPasses(t *testing.T) {
 		t.Fatalf("restore alert missing for an alerted period: %+v", sender.messages)
 	}
 }
+
+func TestReportPending(t *testing.T) {
+	dir := t.TempDir()
+	cases := map[string]struct {
+		content string // empty string with write=false means missing file
+		write   bool
+		want    bool
+	}{
+		"missing":      {want: false},
+		"corrupt":      {content: "{not json", write: true, want: true},
+		"empty":        {content: "", write: true, want: true},
+		"pending":      {content: `{"current":{"id":"x"}}`, write: true, want: true},
+		"null current": {content: `{"current":null}`, write: true, want: false},
+		"no current":   {content: `{"seen_online":true}`, write: true, want: false},
+	}
+	for name, c := range cases {
+		path := filepath.Join(dir, strings.ReplaceAll(name, " ", "_")+".json")
+		if c.write {
+			if err := os.WriteFile(path, []byte(c.content), 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if got := ReportPending(path); got != c.want {
+			t.Errorf("%s: ReportPending = %v, want %v", name, got, c.want)
+		}
+	}
+	if !ReportPending(dir) {
+		t.Error("unreadable state path must count as pending")
+	}
+}

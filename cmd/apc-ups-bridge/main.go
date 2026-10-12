@@ -112,14 +112,7 @@ func run() int {
 	}
 	clean := func(days int) {
 		// Preserve event logs while an incident report is still pending.
-		if b, readErr := os.ReadFile(*emailStatePath); readErr == nil {
-			var pending struct {
-				Current json.RawMessage `json:"current"`
-			}
-			if json.Unmarshal(b, &pending) != nil || (len(pending.Current) > 0 && string(pending.Current) != "null") {
-				return
-			}
-		} else if readErr != nil && !os.IsNotExist(readErr) {
+		if notify.ReportPending(*emailStatePath) {
 			return
 		}
 		if n, e := events.Cleanup(*logDir, days, time.Now()); e != nil {

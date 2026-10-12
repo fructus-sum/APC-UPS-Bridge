@@ -22,6 +22,8 @@ import (
 // one incident, so flapping mains cannot flood the mailbox.
 const alertCooldown = 10 * time.Minute
 
+const errGatewayUnreachable = "SMTP gateway unreachable; report retained"
+
 // Target identifies a system that must become SSH-reachable before the summary.
 // Host identity is captured at outage time and survives Pi reboots.
 type Target struct {
@@ -62,6 +64,19 @@ type State struct {
 	LastReportID string    `json:"last_report_id,omitempty"`
 	LastReportAt time.Time `json:"last_report_at,omitempty"`
 }
+// ReportPending reports whether the state file at statePath holds an incident
+// whose report has not been sent yet. A missing file means nothing is pending;
+// an unreadable or corrupt file is treated as pending so callers fail safe.
+func ReportPending(statePath string) bool {
+	var s struct {
+		Current json.RawMessage `json:"current"`
+	}
+	if _, err := fileutil.ReadJSON(statePath, &s); err != nil {
+		return true
+	}
+	return len(s.Current) > 0 && string(s.Current) != "null"
+}
+
 type Status struct {
 	Enabled      bool      `json:"enabled"`
 	Pending      bool      `json:"pending"`
@@ -271,8 +286,8 @@ func (e *Engine) Observe(ctx context.Context, s monitor.Status, targets []Target
 		return nil
 	}
 	if err := e.probe(ctx, cfg); err != nil {
-		if i.LastError != "SMTP gateway unreachable; report retained" {
-			i.LastError = "SMTP gateway unreachable; report retained"
+		if i.LastError != errGatewayUnreachable {
+			i.LastError = errGatewayUnreachable
 			_ = e.persist()
 			e.log("email_summary_queued", "info", map[string]any{"incident": i.ID})
 		}
