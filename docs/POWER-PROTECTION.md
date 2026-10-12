@@ -36,3 +36,9 @@ Only hosts with an accepted prior shutdown, explicit wake permission and unchang
 Power protection state is stored at `/var/lib/apc-ups-bridge/power-state.json`, separate from configurable rules in `/etc/apc-ups-bridge/power.json`. Corrupt state fails closed instead of guessing which commands were already attempted. Always keep both files across upgrades or power cycles.
 
 **Safety:** Test shutdown order, SSH host-key verification, service permissions, abrupt Pi restarts, battery thresholds and WoL on noncritical equipment before relying on automatic protection. Use [installation guidance](INSTALL.md) for service setup and [email documentation](EMAIL-NOTIFICATIONS.md) for the separate full-charge report completion rule.
+
+## Dashboard device availability (read-only)
+
+The dashboard and saved remote-device cards show friendly names and **Online** or **Offline (SSH unreachable)**. This is an independent, authenticated, read-only TCP probe of each configured SSH port, refreshed every 30 seconds by the browser. It performs **no SSH authentication**, does not test the shutdown command, and cannot wake or shut down a host. An SSH port that is closed, blocked or unreachable may show Offline even when the machine is running; Online means only that the SSH TCP port accepted a connection. It does not claim verified machine power state. The response contains only friendly names, device IDs, status and check timestamps, never SSH credentials.
+
+Saved devices are collapsed on the Power rules page by default, with the friendly name, reachability status and Remove control always visible. Open a device to edit its fields or perform the existing connection-only Test SSH. New devices start expanded, and invalid fields reopen their editor when saving. The web server retains its original unprivileged service identity.
