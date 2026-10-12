@@ -265,6 +265,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/api/power/ssh-key":
 		if r.Method != http.MethodGet { http.Error(w, "method not allowed", 405); return }
 		respondJSON(w, struct { Keys []power.SSHPublicKey `json:"keys"` }{power.ServicePublicKeys()})
+	case "/api/power/devices/status":
+		h.deviceStatus(w,r)
 	case "/api/power/state":
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", 405)
