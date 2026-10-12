@@ -64,7 +64,7 @@ func TestOldSampleSchemaAndEventMeasurementPrecedence(t *testing.T){
  now:=time.Now().UTC().Add(-time.Hour).Truncate(Interval)
  // Old JSON samples do not have battery/runtime fields.
  if err:=os.WriteFile(filepath.Join(dir,filename(now)),[]byte(`{"time":"`+now.Format(time.RFC3339)+`","input_volts":230,"load_percent":25}`+"\n"),0600);err!=nil{t.Fatal(err)}
- if err:=events.FileWriter{Dir:logs}.Write(events.Event{Time:now,Type:"power_lost",Details:map[string]any{"battery_percent":51.0}});err!=nil{t.Fatal(err)}
+ if err:=(events.FileWriter{Dir:logs}).Write(events.Event{Time:now,Type:"power_lost",Details:map[string]any{"battery_percent":51.0}});err!=nil{t.Fatal(err)}
  got,err:=New(dir).Read(1,now,logs);if err!=nil{t.Fatal(err)}
  for _,p:=range got.Points{if p.Time.Equal(now){if !p.Observed||p.BatteryPercent==nil||*p.BatteryPercent!=51||!p.BatteryFromEvent{t.Fatalf("old format incompatible: %+v",p)};return}}
  t.Fatal("no slot found")
