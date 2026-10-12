@@ -32,75 +32,99 @@ func ReadHistory(dir string, days, limit int, now time.Time) (History, error) {
 		return History{}, fmt.Errorf("invalid history request")
 	}
 	result := History{Events: []Event{}}
-	items, err := os.ReadDir(dir)
-	if os.IsNotExist(err) {
-		return result, nil
-	}
-	if err != nil {
-		return result, err
-	}
-	files := make([]string, 0)
-	for _, item := range items {
-		name := item.Name()
-		if !item.Type().IsRegular() || !strings.HasPrefix(name, "events-") || !strings.HasSuffix(name, ".jsonl") || len(name) != len("events-2006-01.jsonl") {
-			continue
-		}
-		if _, err = time.Parse("2006-01", strings.TrimSuffix(strings.TrimPrefix(name, "events-"), ".jsonl")); err == nil {
-			files = append(files, name)
-		}
-	}
-	sort.Strings(files)
 	cutoff := time.Time{}
 	if days > 0 {
 		cutoff = now.UTC().AddDate(0, 0, -days)
 	}
-	for _, name := range files {
-		f, err := os.Open(filepath.Join(dir, name))
-		if err != nil {
-			return result, err
+	err := eachEventInWindow(dir, cutoff, time.Time{}, func(ev Event) {
+		if ev.Type == "" || ev.Time.IsZero() {
+			return
 		}
-		scan := bufio.NewScanner(f)
-		scan.Buffer(make([]byte, 4096), 1024*1024)
-		for scan.Scan() {
-			var ev Event
-			if json.Unmarshal(scan.Bytes(), &ev) != nil || ev.Type == "" || ev.Time.IsZero() || (!cutoff.IsZero() && ev.Time.Before(cutoff)) {
-				continue
-			}
-			switch ev.Type {
-			case "power_lost", "on_battery_detected":
-				result.Report.Outages++
-			case "power_restored":
-				result.Report.Restorations++
-				if sec, ok := ev.Details["observed_outage_seconds"].(float64); ok && sec >= 0 && sec < 1e9 {
-					result.Report.ObservedOutageSeconds += int64(sec)
-					if int64(sec) > result.Report.LongestObservedOutageSeconds {
-						result.Report.LongestObservedOutageSeconds = int64(sec)
-					}
+		switch ev.Type {
+		case "power_lost", "on_battery_detected":
+			result.Report.Outages++
+		case "power_restored":
+			result.Report.Restorations++
+			if sec, ok := ev.Details["observed_outage_seconds"].(float64); ok && sec >= 0 && sec < 1e9 {
+				result.Report.ObservedOutageSeconds += int64(sec)
+				if int64(sec) > result.Report.LongestObservedOutageSeconds {
+					result.Report.LongestObservedOutageSeconds = int64(sec)
 				}
-			case "low_battery":
-				result.Report.LowBatteryWarnings++
-			case "ups_communication_lost":
-				result.Report.CommunicationFailures++
 			}
-			// Retain the bounded newest set, even if log entries were out of order.
-			result.Events = append(result.Events, ev)
-			if len(result.Events) > limit*2 {
-				sort.Slice(result.Events, func(i, j int) bool { return result.Events[i].Time.After(result.Events[j].Time) })
-				result.Events = result.Events[:limit]
-			}
+		case "low_battery":
+			result.Report.LowBatteryWarnings++
+		case "ups_communication_lost":
+			result.Report.CommunicationFailures++
 		}
-		scanErr := scan.Err()
-		closeErr := f.Close()
-		if scanErr != nil {
-			return result, fmt.Errorf("scan %s: %w", name, scanErr)
+		// Retain the bounded newest set, even if log entries were out of order.
+		result.Events = append(result.Events, ev)
+		if len(result.Events) > limit*2 {
+			sort.Slice(result.Events, func(i, j int) bool { return result.Events[i].Time.After(result.Events[j].Time) })
+			result.Events = result.Events[:limit]
 		}
-		if closeErr != nil {
-			return result, closeErr
-		}
+	})
+	if err != nil {
+		return result, err
 	}
 	sort.Slice(result.Events, func(i, j int) bool { return result.Events[i].Time.After(result.Events[j].Time) })
 	if len(result.Events) > limit {
 		result.Events = result.Events[:limit]
 	}
 	return result, nil
+}
+
+// eventFileMonth returns the month of an events-YYYY-MM.jsonl file name.
+func eventFileMonth(name string) (time.Time, bool) {
+	if len(name) != len("events-2006-01.jsonl") || !strings.HasPrefix(name, "events-") || !strings.HasSuffix(name, ".jsonl") {
+		return time.Time{}, false
+	}
+	month, err := time.Parse("2006-01", name[len("events-"):len(name)-len(".jsonl")])
+	return month, err == nil
+}
+
+// eachEventInWindow calls fn, oldest file first and in file order, for every
+// parsable event dated within [from, to]. A zero from or to leaves that side
+// open. A missing directory is not an error; unparsable lines are ignored.
+func eachEventInWindow(dir string, from, to time.Time, fn func(Event)) error {
+	items, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	files := make([]string, 0)
+	for _, item := range items {
+		month, ok := eventFileMonth(item.Name())
+		if !ok || !item.Type().IsRegular() ||
+			(!to.IsZero() && month.After(to)) || (!from.IsZero() && !month.AddDate(0, 1, 0).After(from)) {
+			continue
+		}
+		files = append(files, item.Name())
+	}
+	sort.Strings(files)
+	for _, name := range files {
+		f, err := os.Open(filepath.Join(dir, name))
+		if err != nil {
+			return err
+		}
+		scan := bufio.NewScanner(f)
+		scan.Buffer(make([]byte, 4096), 1024*1024)
+		for scan.Scan() {
+			var ev Event
+			if json.Unmarshal(scan.Bytes(), &ev) != nil || ev.Time.Before(from) || (!to.IsZero() && ev.Time.After(to)) {
+				continue
+			}
+			fn(ev)
+		}
+		scanErr := scan.Err()
+		closeErr := f.Close()
+		if scanErr != nil {
+			return fmt.Errorf("read %s: %w", name, scanErr)
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+	}
+	return nil
 }

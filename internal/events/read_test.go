@@ -54,9 +54,6 @@ func TestReadHistoryAndReport(t *testing.T) {
 }
 
 func TestReadPowerTimelineKeepsNewestWhenOverCap(t *testing.T) {
-	old := maxPowerTimelineEvents
-	maxPowerTimelineEvents = 5
-	defer func() { maxPowerTimelineEvents = old }()
 	dir := t.TempDir()
 	w := FileWriter{Dir: dir}
 	base := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
@@ -65,7 +62,7 @@ func TestReadPowerTimelineKeepsNewestWhenOverCap(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	got, err := ReadPowerTimeline(dir, base.Add(-time.Hour), time.Now().UTC())
+	got, err := readPowerTimeline(dir, base.Add(-time.Hour), time.Now().UTC(), 5)
 	if err != nil {
 		t.Fatalf("over-cap window must not fail: %v", err)
 	}

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 )
 
@@ -75,11 +74,8 @@ func Cleanup(dir string, retentionDays int, now time.Time) (int, error) {
 	removed := 0
 	for _, entry := range entries {
 		name := entry.Name()
-		if entry.IsDir() || !strings.HasPrefix(name, "events-") || !strings.HasSuffix(name, ".jsonl") || len(name) != len("events-2006-01.jsonl") {
-			continue
-		}
-		month, err := time.Parse("2006-01", name[len("events-"):len(name)-len(".jsonl")])
-		if err != nil {
+		month, ok := eventFileMonth(name)
+		if !ok || entry.IsDir() {
 			continue
 		}
 		endOfMonth := month.AddDate(0, 1, 0)
