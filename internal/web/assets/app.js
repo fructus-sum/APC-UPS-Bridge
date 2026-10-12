@@ -146,7 +146,7 @@ async function refreshPowerState(){
  const text=v.enabled ? (v.active ? 'Active: '+v.phase.replaceAll('_',' ') : (v.armed?'Armed · waiting for outage':'Enabled · not yet armed')) : 'Disabled · remote actions off';
  if(el('automation-state'))el('automation-state').textContent=text;
  if(el('power-state')){el('power-state').textContent=text;el('power-state').className='state '+(v.active?'warn':v.enabled?'ok':'');}
- if(el('power-summary')){const actions=Object.entries(v.actions||{}).map(([id,a])=>{const n=a.shutdown_attempts||(a.shutdown_attempted?1:0);return id+': '+(a.shutdown_confirmed?'confirmed off':a.shutdown_gave_up?'gave up':a.shutdown_accepted?'shutdown sent':n>0?'retrying ('+n+'/5)':'shutdown pending')+(a.wake_sent?', wake sent':a.wake_attempted?', wake attempted':'');});
+ if(el('power-summary')){const names=new Map(Array.from(document.querySelectorAll('#device-list .device')).map(section=>[section.querySelector('[data-key="id"]')?.value,section.querySelector('[data-key="name"]')?.value]));const actions=Object.entries(v.actions||{}).map(([id,a])=>{const n=a.shutdown_attempts||(a.shutdown_attempted?1:0);return (names.get(id)||id)+': '+(a.shutdown_confirmed?'confirmed off':a.shutdown_gave_up?'gave up':a.shutdown_accepted?'shutdown sent':n>0?'retrying ('+n+'/5)':'shutdown pending')+(a.wake_sent?', wake sent':a.wake_attempted?', wake attempted':'');});
  el('power-summary').textContent=text+(actions.length?' · '+actions.join(' | '):'');}
  }catch(e){if(el('automation-state'))el('automation-state').textContent='Automation status unavailable';}
 }
