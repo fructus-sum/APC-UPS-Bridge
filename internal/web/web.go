@@ -125,150 +125,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		status := h.Monitor.Snapshot()
 		respondJSON(w, firmware.Check(status.Current))
 	case "/api/events", "/api/events.csv", "/api/report":
-		if !requireMethod(w, r, http.MethodGet) {
-			return
-		}
-		days, ok := queryInt(r, "days", 30, 0, 36500)
-		if !ok {
-			http.Error(w, "invalid days", 400)
-			return
-		}
-		limit, ok := queryInt(r, "limit", 100, 1, 500)
-		if !ok {
-			http.Error(w, "invalid limit", 400)
-			return
-		}
-		history, err := events.ReadHistory(h.Logs, days, limit, time.Now())
-		if err != nil {
-			http.Error(w, "failed to read event history", 500)
-			return
-		}
-		if r.URL.Path == "/api/report" {
-			respondJSON(w, history.Report)
-		} else if r.URL.Path == "/api/events.csv" {
-			w.Header().Set("Content-Type", "text/csv; charset=utf-8")
-			w.Header().Set("Content-Disposition", `attachment; filename="apc-ups-bridge-events.csv"`)
-			csvWriter := csv.NewWriter(w)
-			_ = csvWriter.Write([]string{"timestamp_utc", "event", "level", "details_json"})
-			for _, ev := range history.Events {
-				details, _ := json.Marshal(ev.Details)
-				_ = csvWriter.Write([]string{ev.Time.UTC().Format(time.RFC3339), excelSafe(ev.Type), excelSafe(ev.Level), excelSafe(string(details))})
-			}
-			csvWriter.Flush()
-		} else {
-			respondJSON(w, history.Events)
-		}
+		h.eventsRoute(w, r)
 	case "/api/settings":
-		if r.Method == http.MethodGet {
-			respondJSON(w, h.Config.Get())
-			return
-		}
-		if !requireMethod(w, r, http.MethodPost) {
-			return
-		}
-		if !requireCSRF(w, r, csrf) {
-			return
-		}
-		var value config.Settings
-		if err := decodeStrict(w, r, 4096, &value); err != nil {
-			http.Error(w, bodyErrorText(err, "invalid settings"), 400)
-			return
-		}
-		if err := h.Config.Save(value); err != nil {
-			http.Error(w, err.Error(), 400)
-			return
-		}
-		respondJSON(w, h.Config.Get())
+		h.settingsRoute(w, r, csrf)
 	case "/api/power":
-		if h.Power == nil {
-			http.Error(w, "power automation unavailable", http.StatusServiceUnavailable)
-			return
-		}
-		if r.Method == http.MethodGet {
-			respondJSON(w, h.PowerConfig())
-			return
-		}
-		if !requireMethod(w, r, http.MethodPost) {
-			return
-		}
-		if !requireCSRF(w, r, csrf) {
-			return
-		}
-		var value power.Config
-		if err := decodeStrict(w, r, 32768, &value); err != nil {
-			http.Error(w, bodyErrorText(err, "invalid power rules"), 400)
-			return
-		}
-		if err := h.Power.UpdateConfig(value); err != nil {
-			http.Error(w, err.Error(), 400)
-			return
-		}
-		if h.Status != nil {
-			h.Status.Nudge()
-		}
-		respondJSON(w, h.PowerConfig())
+		h.powerConfigRoute(w, r, csrf)
 	case "/api/power/host-settings":
-		if !requireMethod(w, r, http.MethodPost) {
-			return
-		}
-		if !requireCSRF(w, r, csrf) {
-			return
-		}
-		var v hostsettings.Settings
-		if decodeStrict(w, r, 1024, &v) != nil {
-			http.Error(w, "invalid shutdown settings", 400)
-			return
-		}
-		if err := v.Validate(); err != nil {
-			http.Error(w, err.Error(), 400)
-			return
-		}
-		if v.Managed {
-			if !h.onlineConfirmed() {
-				http.Error(w, "UPS is not confirmed ONLINE; shutdown settings cannot be changed", 409)
-				return
-			}
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 50*time.Second)
-		defer cancel()
-		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(55 * time.Second))
-		result, err := applyHostSettings(ctx, v)
-		if err != nil {
-			http.Error(w, "Local apcupsd settings service unavailable: "+err.Error(), 503)
-			return
-		}
-		if result.Error != "" {
-			http.Error(w, result.Error, 409)
-			return
-		}
-		respondJSON(w, result)
+		h.hostSettingsRoute(w, r, csrf)
 	case "/api/power/host-thresholds":
 		if !requireMethod(w, r, http.MethodGet) {
 			return
 		}
 		respondJSON(w, hostShutdownSettings())
 	case "/api/power/test-ssh":
-		if !requireMethod(w, r, http.MethodPost) {
-			return
-		}
-		if !requireCSRF(w, r, csrf) {
-			return
-		}
-		var req struct {
-			ID string `json:"id"`
-		}
-		if decodeStrict(w, r, 1024, &req) != nil || req.ID == "" {
-			http.Error(w, "invalid saved device ID", 400)
-			return
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-		defer cancel()
-		result, found := h.testSavedSSH(ctx, req.ID)
-		if !found {
-			http.Error(w, "saved device not found", 404)
-			return
-		}
-		respondJSON(w, result)
+		h.testSSHRoute(w, r, csrf)
 	case "/api/power/ssh-key":
 		if !requireMethod(w, r, http.MethodGet) {
 			return
@@ -286,31 +156,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		respondJSON(w, h.Power.View())
 	case "/change-password":
-		if !requireMethod(w, r, http.MethodPost) {
-			return
-		}
-		if !requireCSRF(w, r, csrf) {
-			return
-		}
-		r.Body = http.MaxBytesReader(w, r.Body, 4096)
-		if err := r.ParseForm(); err != nil {
-			http.Error(w, "bad request", 400)
-			return
-		}
-		if err := h.Auth.ChangePassword(r.PostFormValue("old"), r.PostFormValue("new")); err != nil {
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			w.WriteHeader(400)
-			_ = page.Execute(w, viewData{Page: "/settings", CSRF: csrf, Error: "Current password incorrect or new password invalid (minimum 12 characters)."})
-			return
-		}
-		h.Auth.Logout(token)
-		setSessionCookie(w, r, "", -1)
-		http.Redirect(w, r, "/login?changed=1", http.StatusSeeOther)
+		h.changePasswordRoute(w, r, token, csrf)
 	case "/logout":
-		if !requireMethod(w, r, http.MethodPost) {
-			return
-		}
-		if !requireCSRF(w, r, csrf) {
+		if !requireMethod(w, r, http.MethodPost) || !requireCSRF(w, r, csrf) {
 			return
 		}
 		h.Auth.Logout(token)
@@ -319,6 +167,168 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// eventsRoute serves the event list, its CSV export and the summary report.
+func (h *Handler) eventsRoute(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
+	days, ok := queryInt(r, "days", 30, 0, 36500)
+	if !ok {
+		http.Error(w, "invalid days", 400)
+		return
+	}
+	limit, ok := queryInt(r, "limit", 100, 1, 500)
+	if !ok {
+		http.Error(w, "invalid limit", 400)
+		return
+	}
+	hist, err := events.ReadHistory(h.Logs, days, limit, time.Now())
+	if err != nil {
+		http.Error(w, "failed to read event history", 500)
+		return
+	}
+	switch r.URL.Path {
+	case "/api/report":
+		respondJSON(w, hist.Report)
+	case "/api/events.csv":
+		writeEventsCSV(w, hist.Events)
+	default:
+		respondJSON(w, hist.Events)
+	}
+}
+
+func writeEventsCSV(w http.ResponseWriter, evs []events.Event) {
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="apc-ups-bridge-events.csv"`)
+	csvWriter := csv.NewWriter(w)
+	_ = csvWriter.Write([]string{"timestamp_utc", "event", "level", "details_json"})
+	for _, ev := range evs {
+		details, _ := json.Marshal(ev.Details)
+		_ = csvWriter.Write([]string{ev.Time.UTC().Format(time.RFC3339), excelSafe(ev.Type), excelSafe(ev.Level), excelSafe(string(details))})
+	}
+	csvWriter.Flush()
+}
+
+func (h *Handler) settingsRoute(w http.ResponseWriter, r *http.Request, csrf string) {
+	if r.Method == http.MethodGet {
+		respondJSON(w, h.Config.Get())
+		return
+	}
+	if !requireMethod(w, r, http.MethodPost) || !requireCSRF(w, r, csrf) {
+		return
+	}
+	var value config.Settings
+	if err := decodeStrict(w, r, 4096, &value); err != nil {
+		http.Error(w, bodyErrorText(err, "invalid settings"), 400)
+		return
+	}
+	if err := h.Config.Save(value); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	respondJSON(w, h.Config.Get())
+}
+
+func (h *Handler) powerConfigRoute(w http.ResponseWriter, r *http.Request, csrf string) {
+	if h.Power == nil {
+		http.Error(w, "power automation unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if r.Method == http.MethodGet {
+		respondJSON(w, h.PowerConfig())
+		return
+	}
+	if !requireMethod(w, r, http.MethodPost) || !requireCSRF(w, r, csrf) {
+		return
+	}
+	var value power.Config
+	if err := decodeStrict(w, r, 32768, &value); err != nil {
+		http.Error(w, bodyErrorText(err, "invalid power rules"), 400)
+		return
+	}
+	if err := h.Power.UpdateConfig(value); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	if h.Status != nil {
+		h.Status.Nudge()
+	}
+	respondJSON(w, h.PowerConfig())
+}
+
+func (h *Handler) hostSettingsRoute(w http.ResponseWriter, r *http.Request, csrf string) {
+	if !requireMethod(w, r, http.MethodPost) || !requireCSRF(w, r, csrf) {
+		return
+	}
+	var v hostsettings.Settings
+	if decodeStrict(w, r, 1024, &v) != nil {
+		http.Error(w, "invalid shutdown settings", 400)
+		return
+	}
+	if err := v.Validate(); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	if v.Managed && !h.onlineConfirmed() {
+		http.Error(w, "UPS is not confirmed ONLINE; shutdown settings cannot be changed", 409)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 50*time.Second)
+	defer cancel()
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(55 * time.Second))
+	result, err := applyHostSettings(ctx, v)
+	if err != nil {
+		http.Error(w, "Local apcupsd settings service unavailable: "+err.Error(), 503)
+		return
+	}
+	if result.Error != "" {
+		http.Error(w, result.Error, 409)
+		return
+	}
+	respondJSON(w, result)
+}
+
+func (h *Handler) testSSHRoute(w http.ResponseWriter, r *http.Request, csrf string) {
+	if !requireMethod(w, r, http.MethodPost) || !requireCSRF(w, r, csrf) {
+		return
+	}
+	var req struct {
+		ID string `json:"id"`
+	}
+	if decodeStrict(w, r, 1024, &req) != nil || req.ID == "" {
+		http.Error(w, "invalid saved device ID", 400)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	result, found := h.testSavedSSH(ctx, req.ID)
+	if !found {
+		http.Error(w, "saved device not found", 404)
+		return
+	}
+	respondJSON(w, result)
+}
+
+func (h *Handler) changePasswordRoute(w http.ResponseWriter, r *http.Request, token, csrf string) {
+	if !requireMethod(w, r, http.MethodPost) || !requireCSRF(w, r, csrf) {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad request", 400)
+		return
+	}
+	if err := h.Auth.ChangePassword(r.PostFormValue("old"), r.PostFormValue("new")); err != nil {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(400)
+		_ = page.Execute(w, viewData{Page: "/settings", CSRF: csrf, Error: "Current password incorrect or new password invalid (minimum 12 characters)."})
+		return
+	}
+	h.Auth.Logout(token)
+	setSessionCookie(w, r, "", -1)
+	http.Redirect(w, r, "/login?changed=1", http.StatusSeeOther)
 }
 
 // Prefix formula-like cells to prevent spreadsheet execution on CSV open.
