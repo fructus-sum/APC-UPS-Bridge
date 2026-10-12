@@ -12,7 +12,7 @@ import (
 
 // Independent privileged audit trail. Never make it writable by the web service.
 // Deliberately read only the dedicated exported log, not general system journal.
-const fail2banLogPath = "/var/log/apc-ups-bridge-fail2ban/events.log"
+var fail2banLogPath = "/var/log/apc-ups-bridge-fail2ban/events.log"
 
 type securityEvent struct {
  Time string `json:"time"`
