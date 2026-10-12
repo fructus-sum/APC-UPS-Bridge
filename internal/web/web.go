@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"strconv"
@@ -81,6 +82,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	if h.securityRoutes(w, r) { return }
 	if h.historyRoutes(w, r) {
 		return
 	}
@@ -88,7 +90,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch r.URL.Path {
-	case "/", "/events", "/settings", "/power", "/history":
+	case "/", "/events", "/settings", "/power", "/history", "/security":
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", 405)
 			return
@@ -377,6 +379,10 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	}
 	token, _, err := h.Auth.Login(addr, r.PostFormValue("username"), r.PostFormValue("password"))
 	if err != nil {
+		if ip := net.ParseIP(addr); ip != nil && (errors.Is(err, auth.ErrCredentials) || errors.Is(err, auth.ErrSuspicious)) {
+			log.Printf("APC_UPS_BRIDGE_AUTH_FAILURE ip=%s", ip.String())
+		}
+		if errors.Is(err, auth.ErrSuspicious) && h.Mail != nil { go h.Mail.SendSecurityWarning() }
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if !errors.Is(err, auth.ErrCredentials) && strings.Contains(err.Error(), "too many") {
 			w.WriteHeader(http.StatusTooManyRequests)
