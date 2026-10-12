@@ -297,12 +297,11 @@ func (s *Store) Read(days int, now time.Time, eventDir string) (Result, error) {
 		}
 	}
 	if eventDir != "" {
-		hist, err := events.ReadHistory(eventDir, days, 500, now)
+		hist, err := events.ReadPowerTimeline(eventDir, start, now)
 		if err != nil {
 			return Result{}, err
 		}
-		for i := len(hist.Events) - 1; i >= 0; i-- {
-			ev := hist.Events[i]
+		for _, ev := range hist {
 			if ev.Time.Before(start) || ev.Time.After(now) {
 				continue
 			}
@@ -322,6 +321,64 @@ func (s *Store) Read(days int, now time.Time, eventDir string) (Result, error) {
 						if n, ok := eventNumber(ev.Details, "runtime_minutes", 0, 100000); ok { bucket.RuntimeMinutes = &n; bucket.RuntimeFromEvent = true }
 					}
 				}
+			}
+		}
+	}
+	return result, nil
+}
+
+const DefaultBatteryDays = 30
+
+// ReadBattery returns the independently selectable battery-only graph history.
+// It contains at most 30 days of actual 15-minute samples (the existing
+// retention policy), plus true event timestamps across the requested year.
+// The sparse older section does not invent 15-minute samples or uptime.
+func (s *Store) ReadBattery(days int, now time.Time, eventDir string) (Result, error) {
+	switch days {
+	case 30, 90, 180, 365:
+	default:
+		return Result{}, fmt.Errorf("battery range must be 30, 90, 180 or 365 days")
+	}
+	now = now.UTC()
+	end := now.Truncate(Interval)
+	start := end.Add(-time.Duration(days) * 24 * time.Hour)
+	recent, err := s.Read(30, now, "")
+	if err != nil {
+		return Result{}, err
+	}
+	result := Result{
+		From: start, To: end, IntervalSeconds: int(Interval.Seconds()),
+		Points: recent.Points, Events: []events.Event{}, Samples: recent.Samples,
+	}
+	if eventDir == "" {
+		return result, nil
+	}
+	all, err := events.ReadPowerTimeline(eventDir, start, now)
+	if err != nil {
+		return Result{}, err
+	}
+	result.Events = all
+	// Only backfill the recent grid. Older events remain isolated dots with
+	// their exact timestamps and must never extend the recent sample lines.
+	for _, ev := range all {
+		if ev.Time.Before(recent.From) {
+			continue
+		}
+		idx := int(ev.Time.UTC().Truncate(Interval).Sub(recent.From) / Interval)
+		if idx < 0 || idx >= len(result.Points) {
+			continue
+		}
+		p := &result.Points[idx]
+		if p.BatteryPercent == nil {
+			if n, ok := eventNumber(ev.Details, "battery_percent", 0, 100); ok {
+				p.BatteryPercent = &n
+				p.BatteryFromEvent = true
+			}
+		}
+		if p.RuntimeMinutes == nil {
+			if n, ok := eventNumber(ev.Details, "runtime_minutes", 0, 100000); ok {
+				p.RuntimeMinutes = &n
+				p.RuntimeFromEvent = true
 			}
 		}
 	}
