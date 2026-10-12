@@ -171,15 +171,13 @@ func run() int {
 	statusMonitor := power.NewStatusMonitor(powerController.Config, power.LinuxExecutor{})
 	statusMonitor.Logf = logger.Printf
 	handler, err := web.New(mon, admin, settings, *logDir, powerController)
-	if err == nil {
-		web.AttachEmail(handler, mailEngine)
-		web.AttachHistory(handler, historyStore)
-		web.AttachStatus(handler, statusMonitor)
-	}
 	if err != nil {
 		logger.Print(err)
 		return 2
 	}
+	handler.Mail = mailEngine
+	handler.History = historyStore
+	handler.Status = statusMonitor
 	listener, err := net.Listen("tcp", *listen)
 	if err != nil {
 		logger.Printf("listen %s: %v", *listen, err)

@@ -11,13 +11,6 @@ import (
 
 var emailPage = template.Must(template.ParseFS(static, "assets/email.html"))
 
-// AttachEmail adds email configuration/reporting to the existing authenticated
-// single-port web handler. It does not create an additional listener.
-func AttachEmail(h http.Handler, engine *notify.Engine) {
-	if v, ok := h.(*Handler); ok {
-		v.Mail = engine
-	}
-}
 func (h *Handler) emailRoutes(w http.ResponseWriter, r *http.Request, csrf string) bool {
 	switch r.URL.Path {
 	case "/email":

@@ -42,6 +42,8 @@ type Handler struct {
 	Mail    *notify.Engine
 	History *history.Store
 	Status  *power.StatusMonitor
+	// Fail2banLog is the exported Fail2ban event log shown on the security page.
+	Fail2banLog string
 }
 type viewData struct {
 	Page    string
@@ -237,7 +239,7 @@ func (h *Handler) powerConfigRoute(w http.ResponseWriter, r *http.Request, csrf 
 		return
 	}
 	if r.Method == http.MethodGet {
-		respondJSON(w, h.PowerConfig())
+		respondJSON(w, h.Power.Config())
 		return
 	}
 	if !requireMethod(w, r, http.MethodPost) || !requireCSRF(w, r, csrf) {
@@ -255,7 +257,7 @@ func (h *Handler) powerConfigRoute(w http.ResponseWriter, r *http.Request, csrf 
 	if h.Status != nil {
 		h.Status.Nudge()
 	}
-	respondJSON(w, h.PowerConfig())
+	respondJSON(w, h.Power.Config())
 }
 
 func (h *Handler) hostSettingsRoute(w http.ResponseWriter, r *http.Request, csrf string) {
@@ -413,18 +415,12 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
-func (h *Handler) PowerConfig() power.Config { return h.Power.Config() }
-
 // New creates a handler with no listener and no background goroutines.
-func New(mon *monitor.Monitor, a *auth.Store, c *config.Store, logs string, powers ...*power.Controller) (http.Handler, error) {
+func New(mon *monitor.Monitor, a *auth.Store, c *config.Store, logs string, p *power.Controller) (*Handler, error) {
 	if mon == nil || a == nil || c == nil {
 		return nil, fmt.Errorf("monitor, authentication and settings are required")
 	}
-	h := &Handler{Monitor: mon, Auth: a, Config: c, Logs: logs}
-	if len(powers) > 0 {
-		h.Power = powers[0]
-	}
-	return h, nil
+	return &Handler{Monitor: mon, Auth: a, Config: c, Logs: logs, Power: p, Fail2banLog: defaultFail2banLog}, nil
 }
 
 const (

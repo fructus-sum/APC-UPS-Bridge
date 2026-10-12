@@ -32,7 +32,7 @@ func (testReader) Read(context.Context) (apc.Snapshot, error) {
 // fixture is a handler wired to real stores in a temporary directory, with one
 // signed-in session. Optional parts are switched on with fixtureOption values.
 type fixture struct {
-	Handler    http.Handler
+	Handler    *Handler
 	Auth       *auth.Store
 	Dir        string
 	Cookie     *http.Cookie // signed-in session
@@ -109,7 +109,7 @@ func newFixture(t *testing.T, opts ...fixtureOption) *fixture {
 		t.Fatal(err)
 	}
 	if o.history {
-		AttachHistory(f.Handler, history.New(filepath.Join(dir, "history")))
+		f.Handler.History = history.New(filepath.Join(dir, "history"))
 	}
 	if o.mail != nil {
 		if f.MailStore, err = notify.OpenConfig(filepath.Join(dir, "email.json")); err != nil {
@@ -122,7 +122,7 @@ func newFixture(t *testing.T, opts ...fixtureOption) *fixture {
 		if err != nil {
 			t.Fatal(err)
 		}
-		AttachEmail(f.Handler, engine)
+		f.Handler.Mail = engine
 	}
 	token, csrf, err := f.Auth.Login("127.0.0.1", "admin", testPassphrase)
 	if err != nil {

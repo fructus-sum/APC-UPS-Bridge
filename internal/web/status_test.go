@@ -33,7 +33,7 @@ func TestPowerStatusRoute(t *testing.T) {
 	}
 
 	monitorOnline := power.NewStatusMonitor(ctrl.Config, inertProber{})
-	AttachStatus(h, monitorOnline)
+	f.Handler.Status = monitorOnline
 	v := power.Defaults()
 	v.Devices = []power.Device{{ID: "host-1", Name: "Host", Host: "192.0.2.11", SSHUser: "root", SSHPort: 22, OnlineCheck: "ssh_port"}}
 	b, _ := json.Marshal(v)

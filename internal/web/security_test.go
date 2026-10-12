@@ -17,9 +17,7 @@ func TestSecurityLogAuthenticatedReadOnly(t *testing.T) {
 	if err := os.WriteFile(file, []byte(data), 0600); err != nil {
 		t.Fatal(err)
 	}
-	before := fail2banLogPath
-	fail2banLogPath = file
-	defer func() { fail2banLogPath = before }()
+	f.Handler.Fail2banLog = file
 	if w := request(h, "GET", "/api/security/fail2ban", "", nil, ""); w.Code != http.StatusUnauthorized {
 		t.Fatalf("anonymous access: %d", w.Code)
 	}

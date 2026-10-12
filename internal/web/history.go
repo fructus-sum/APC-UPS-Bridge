@@ -8,13 +8,6 @@ import (
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/history"
 )
 
-// AttachHistory keeps all graph endpoints inside the existing authenticated web server.
-func AttachHistory(h http.Handler, store *history.Store) {
-	if v, ok := h.(*Handler); ok {
-		v.History = store
-	}
-}
-
 func (h *Handler) historyRoutes(w http.ResponseWriter, r *http.Request) bool {
 	switch r.URL.Path {
 	case "/assets/history.js":

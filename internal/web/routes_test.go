@@ -13,7 +13,6 @@ import (
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/power"
 )
 
-
 // buildRouteEnv wires the handler the way the daemon does. Variant "bare"
 // leaves out power, email and history; "offline" never polls the UPS.
 func buildRouteEnv(t *testing.T, variant string) *fixture {
@@ -263,9 +262,10 @@ func TestEveryRoute(t *testing.T) {
 	for _, v := range []string{"", "bare", "offline"} {
 		envs[v] = buildRouteEnv(t, v)
 	}
-	before := fail2banLogPath
-	fail2banLogPath = filepath.Join(t.TempDir(), "missing.log")
-	defer func() { fail2banLogPath = before }()
+	missingLog := filepath.Join(t.TempDir(), "missing.log")
+	for _, env := range envs {
+		env.Handler.Fail2banLog = missingLog
+	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

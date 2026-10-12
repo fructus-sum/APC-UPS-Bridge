@@ -6,13 +6,6 @@ import (
 	"github.com/fructus-sum/APC-UPS-Bridge/internal/power"
 )
 
-// AttachStatus adds the device online-status monitor to the handler.
-func AttachStatus(h http.Handler, m *power.StatusMonitor) {
-	if v, ok := h.(*Handler); ok {
-		v.Status = m
-	}
-}
-
 // statusRoutes serves /api/power/status. It only reads the monitor's memory;
 // it never starts a network check.
 func (h *Handler) statusRoutes(w http.ResponseWriter, r *http.Request) bool {
