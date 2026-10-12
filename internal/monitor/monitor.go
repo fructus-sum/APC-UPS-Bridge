@@ -33,6 +33,7 @@ type Monitor struct {
 	bad      bool
 	gap      bool
 	low      bool
+	chargeBelowFull bool
 	outageAt time.Time
 	lowest   *float64
 	now      func() time.Time
@@ -169,6 +170,17 @@ func (m *Monitor) Poll(ctx context.Context) error {
 		m.outageAt = time.Time{}
 		m.lowest = nil
 		m.low = false
+	}
+	// Record the first observed return to full charge after observing a
+	// reading below full. We do not infer the transition across restarts or
+	// an unobserved communication gap.
+	if snap.BatteryPercent != nil {
+		if *snap.BatteryPercent < 100 {
+			m.chargeBelowFull = true
+		} else if m.chargeBelowFull {
+			record("battery_fully_charged", "info", metricDetails(snap))
+			m.chargeBelowFull = false
+		}
 	}
 	m.prior = snap.Power
 	m.hasPrior = true
