@@ -14,7 +14,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 )
@@ -256,10 +255,4 @@ func (s *Store) ChangePassword(oldPwd, newPwd string) error {
 	}
 	clear(s.sessions)
 	return nil
-}
-func SafeIP(remote string) string { // ignore X-Forwarded-For (untrusted)
-	if idx := strings.LastIndex(remote, ":"); idx >= 0 {
-		return remote[:idx]
-	}
-	return remote
 }

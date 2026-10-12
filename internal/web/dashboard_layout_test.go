@@ -15,7 +15,7 @@ func TestDashboardCollapsedSystemDetailsAndFirmwareLocation(t *testing.T) {
 	cookie := &http.Cookie{Name: "ups_bridge_session", Value: token}
 	dash := request(h, "GET", "/", "", cookie, "")
 	body := dash.Body.String()
-	for _, part := range []string{`id="ups-model-heading"`, `id="model"`, `<details id="system-information"`, `System information`, `id="device-status-list"`, `id="firmware-notice" class="message firmware-warning" role="status" hidden`, `href="/settings"`} {
+	for _, part := range []string{`id="model"`, `<details id="system-information"`, `System information`, `id="device-status-list"`, `id="firmware-notice" class="message firmware-warning" role="status" hidden`, `href="/settings"`} {
 		if !strings.Contains(body, part) {
 			t.Errorf("missing dashboard section: %s", part)
 		}

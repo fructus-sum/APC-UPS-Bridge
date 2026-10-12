@@ -103,7 +103,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = page.Execute(w, viewData{Page: r.URL.Path, CSRF: csrf})
-	case "/assets/app.css", "/assets/app.js":
+	case "/assets/app.js":
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", 405)
 			return
@@ -113,11 +113,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.NotFound(w, r)
 			return
 		}
-		if strings.HasSuffix(r.URL.Path, ".css") {
-			w.Header().Set("Content-Type", "text/css; charset=utf-8")
-		} else {
-			w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
-		}
+		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 		_, _ = w.Write(b)
 	case "/api/status":
 		if r.Method != http.MethodGet {

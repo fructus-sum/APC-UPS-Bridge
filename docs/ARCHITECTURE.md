@@ -7,6 +7,7 @@ APC UPS Bridge is a single Go application for monitoring one USB APC UPS through
 | Source | Role |
 |---|---|
 | `cmd/apc-ups-bridge/` | CLI flags, process lifecycle, polling, server and worker orchestration |
+| `cmd/apc-ups-bridge-host-helper/` | Small root-run helper started by a systemd socket; applies the Settings page's apcupsd threshold changes on behalf of the unprivileged service |
 | `internal/apc/` | Executes and parses `apcaccess status` |
 | `internal/monitor/` | Periodic UPS readings, health classification, cached status and transition events |
 | `internal/events/` | Event-only JSONL files, retention, CSV/report reads |
@@ -15,6 +16,7 @@ APC UPS Bridge is a single Go application for monitoring one USB APC UPS through
 | `internal/config/` | Monitoring preferences and atomic file updates |
 | `internal/power/` | Protected-host rules, durable outage state, SSH shutdown, UDP Wake-on-LAN and display-only device online status (ping / SSH-port connect) |
 | `internal/notify/` | SMTP configuration, durable outage incidents, email delivery and final reports |
+| `internal/hostsettings/` | Validates and applies the local apcupsd shutdown thresholds (battery %, runtime, timer) with a backup and atomic file replace; used by the host helper |
 | `internal/firmware/` | Offline, conservative UPS firmware reference comparison |
 | `internal/web/` | Authenticated HTTP handlers, templates and embedded HTML/CSS/JS |
 | `scripts/` | Source-based installer, installer checks, uninstaller and release build helper |

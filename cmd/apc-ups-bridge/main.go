@@ -1,5 +1,6 @@
-// APC UPS Bridge Phase 4: protected web monitoring and opt-in, fail-closed
-// remote power automation. Local host shutdown is intentionally excluded.
+// APC UPS Bridge: a web monitor for a USB-connected APC UPS (read through
+// apcupsd) with opt-in, fail-closed remote power automation and email alerts.
+// Shutting down the local host is left to apcupsd.
 package main
 
 import (
