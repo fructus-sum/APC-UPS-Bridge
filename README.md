@@ -4,6 +4,18 @@
 
 APC UPS Bridge runs on a systemd-based Linux computer, reads a compatible USB APC UPS through `apcupsd`, and shows its status in a password-protected web interface. It can also shut down other computers on your network when the power fails and wake them again afterwards, and it can email you about outages. No cloud account or database is needed: everything stays on your own hardware.
 
+### Why I built this
+
+I built this project after picking up an old APC UPS for cheap. The original batteries were dead, so I replaced them with LiFePO4 batteries.
+
+**⚠️ DO NOT DO THIS — YOU COULD BURN YOUR HOUSE DOWN!** UPS charging systems are not necessarily designed for LiFePO4 batteries. This was my own experiment, not a recommended modification.
+
+I then rigged it up to power my network and homelab.
+
+I wanted a simple, lightweight way to monitor the UPS and automatically shut down higher-power devices when needed. Some of those devices run 24/7, while others are only switched on occasionally.
+
+The UPS doesn't have any network connectivity, so I connected it via USB to a Raspberry Pi 4, which runs APC UPS Bridge and provides the web interface and power management.
+
 > **Safety:** Power automation is switched off until you turn it on. Test your UPS, remote shutdown and Wake-on-LAN on equipment you can afford to restart before relying on them. Do not make this your only safeguard.
 
 ## What it does
