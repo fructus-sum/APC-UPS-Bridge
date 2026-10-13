@@ -35,7 +35,7 @@ APC UPS Bridge is a single Go application for monitoring one USB APC UPS through
 5. A device online monitor checks each protected device (ping, SSH port connect, or off, per device) for the dashboard's Protected devices panel. It is display only and never triggers an action.
 6. A separate email worker handles outage and restoration alerts and pending final reports without holding up power actions or dashboard requests.
 7. One HTTP server serves the administrator login and these pages: Dashboard, History graphs, Events & reports, Power rules & devices, Email notifications, Login security and Settings. The Login security page reads the exported Fail2ban ban/unban log; Fail2ban itself runs separately and privileged.
-8. The Settings page's Pi thresholds go through the host-settings socket to the root helper, which edits `apcupsd.conf`.
+8. The Settings page's local host thresholds go through the host-settings socket to the root helper, which edits `apcupsd.conf`.
 
 The binary defaults to `127.0.0.1:8080`. The installed service is set to `0.0.0.0:8080` by the installer; see [Installation](INSTALL.md#network-access). The `apcupsd` NIS listener can stay bound to `127.0.0.1`.
 

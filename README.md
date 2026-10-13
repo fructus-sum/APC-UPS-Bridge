@@ -1,8 +1,8 @@
 # APC UPS Bridge
 
-**Web monitoring and optional power protection for a USB-connected APC UPS.**
+**Give your older USB-connected APC UPS a second life—with a modern, self-hosted web dashboard and optional automatic power protection for Linux.**
 
-APC UPS Bridge runs on a Raspberry Pi or other Linux computer, reads a single APC UPS through `apcupsd`, and shows it in a password-protected web page. It can also shut down other computers on your network when the power fails and wake them again afterwards, and it can email you about outages. No cloud account or database is needed: everything stays on your own hardware.
+APC UPS Bridge runs on a systemd-based Linux computer, reads a compatible USB APC UPS through `apcupsd`, and shows its status in a password-protected web interface. It can also shut down other computers on your network when the power fails and wake them again afterwards, and it can email you about outages. No cloud account or database is needed: everything stays on your own hardware.
 
 > **Safety:** Power automation is switched off until you turn it on. Test your UPS, remote shutdown and Wake-on-LAN on equipment you can afford to restart before relying on them. Do not make this your only safeguard.
 
@@ -14,18 +14,33 @@ APC UPS Bridge runs on a Raspberry Pi or other Linux computer, reads a single AP
 - **Power rules & devices:** list up to 16 computers to shut down over SSH, in the order you choose, when the battery falls to a level you set, with optional Wake-on-LAN to start them again after power returns. Each device has an **Online check** (Ping, SSH port or Off) that is only shown on the dashboard and never shuts anything down, and a **Test SSH** button that checks the login without shutting anything down. Pending shutdowns and wake-ups survive restarts and power cuts. See [power protection](docs/POWER-PROTECTION.md).
 - **Email notifications:** connect an email account to get a message when an outage starts and ends, plus a final report once power is back, the UPS is fully charged and your devices are reachable. See [email notifications](docs/EMAIL-NOTIFICATIONS.md).
 - **Login security:** the web login blocks repeated wrong passwords, and the **Login security** page lists recent bans and unbans made by Fail2ban (set up automatically on Debian and Ubuntu). See [login security](docs/LOGIN-SECURITY.md).
-- **Settings:** how often the UPS is read (5 to 60 seconds), the low-battery warning level, how long events are kept, when the Raspberry Pi itself shuts down (below), the firmware panel and your administrator password.
+- **Settings:** how often the UPS is read (5 to 60 seconds), the low-battery warning level, how long events are kept, when the local Linux host shuts down (below), the firmware panel and your administrator password.
 - **Firmware check:** shows the firmware your UPS reports and warns when a newer one is listed for your model. It only compares against a built-in list and never installs firmware. See [firmware guidance](docs/FIRMWARE.md).
 
-### Raspberry Pi shutdown settings
+### Local Linux host shutdown settings
 
-The **Settings** page can change when the Pi itself shuts down during an outage: the battery percentage, the remaining runtime and an on-battery timer. This is separate from the shutdown rules for other computers. Changes are accepted only while mains power is on, and the previous configuration is backed up first. Uninstalling the bridge leaves these settings in `apcupsd.conf`.
+The **Settings** page can change when the Linux host running APC UPS Bridge shuts down during an outage: the battery percentage, the remaining runtime and an on-battery timer. This is separate from the shutdown rules for other computers. Changes are accepted only while mains power is on, and the previous configuration is backed up first. Uninstalling the bridge leaves these settings in `apcupsd.conf`.
 
 ### How often pages refresh
 
 The dashboard updates every 10 seconds. Firmware information and recent events update every 60 seconds. Updating pauses while the browser tab is hidden and catches up as soon as you return to it.
 
-## Install on Linux / Raspberry Pi
+## Linux distribution support
+
+APC UPS Bridge is not limited to one device or Linux distribution. It is intended for **systemd-based Linux hosts** with a compatible USB-connected APC UPS. The statuses below describe support indicated by the installer and source code, **not completed hardware tests on every distribution**.
+
+| Linux distribution | Main application | Automatic Fail2ban |
+| --- | --- | --- |
+| Ubuntu 22.04 / 24.04 / 26.04 LTS | ✅ | ✅ |
+| Debian 12 / 13 | ✅ | ✅ |
+| Raspberry Pi OS | ✅ | ✅ |
+| Linux Mint | ✅ | ✅ |
+| Fedora Server / Workstation | ✅ Expected, **not tested** | ❌ Manual — **MUST use `--skip-fail2ban` in the installer** |
+| openSUSE Tumbleweed | ✅ Expected, **not tested** | ❌ Manual — **MUST use `--skip-fail2ban` in the installer** |
+
+For **Fedora and openSUSE**, both new installs and updates **must** pass `--skip-fail2ban`. This skips only automatic Fail2ban setup: the main application and its built-in login rate limit remain available. Users who need Fail2ban on these distributions must configure it separately. See the [installation guide](docs/INSTALL.md#linux-distribution-support) for the exact commands.
+
+## Install on Linux
 
 **Requirements:** a Linux computer with systemd, a supported APC USB UPS, and internet access during installation. The installer can install `apcupsd` with apt, dnf or zypper; on other systems install it yourself first. The installer builds the program on your computer, so you do not need to download a release.
 
@@ -48,7 +63,7 @@ git pull
 sudo bash scripts/install.sh
 ```
 
-(If you installed with the one-line command, run it again instead.) Your login, settings, email settings, device rules, event logs and listening address are kept. On Debian and Ubuntu the installer also sets up or refreshes the Fail2ban login protection; add `--skip-fail2ban` to skip that. Check the running service and the UPS with:
+(If you installed with the one-line command, run it again instead.) Your login, settings, email settings, device rules, event logs and listening address are kept. Automatic Fail2ban setup is available on Debian/Ubuntu-based systems; **Fedora and openSUSE users must use `sudo bash scripts/install.sh --skip-fail2ban` for updates as well as installs**. Check the running service and the UPS with:
 
 ```bash
 systemctl status apc-ups-bridge.service

@@ -17,9 +17,9 @@ Which lines appear depends on your UPS model. A line shows **Not reported** when
 
 ## Testing the battery by hand
 
-Select **Show manual battery test steps…** and confirm the message that appears. The steps then show the warning and the commands. The page never runs them. You run them yourself at the Pi's console.
+Select **Show manual battery test steps…** and confirm the message that appears. The steps then show the warning and the commands. The page never runs them. You run them yourself at the Linux host's console.
 
-Warning: this test can run your connected equipment on battery power, and it could switch that equipment off if the battery is weak. While the UPS service is stopped, the bridge cannot watch the UPS and your Raspberry Pi will not shut itself down automatically. Only do this when someone is present and the mains power is normal.
+Warning: this test can run your connected equipment on battery power, and it could switch that equipment off if the battery is weak. While the UPS service is stopped, the bridge cannot watch the UPS and your Linux host will not shut itself down automatically. Only do this when someone is present and the mains power is normal.
 
 On the server console, stop the UPS service and start the test:
 
