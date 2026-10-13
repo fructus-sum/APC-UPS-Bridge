@@ -1,6 +1,6 @@
 # APC UPS Bridge
 
-**Give your older USB-connected APC UPS a second life—with a modern, self-hosted web dashboard and optional automatic power protection for Linux.**
+**Give your older USB-connected APC UPS a second life with a simple, lightweight, self-hosted web dashboard and optional power protection for your Linux homelab.**
 
 APC UPS Bridge runs on a systemd-based Linux computer, reads a compatible USB APC UPS through `apcupsd`, and shows its status in a password-protected web interface. It can also shut down other computers on your network when the power fails and wake them again afterwards, and it can email you about outages. No cloud account or database is needed: everything stays on your own hardware.
 
