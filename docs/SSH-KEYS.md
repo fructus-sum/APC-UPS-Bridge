@@ -8,7 +8,7 @@ On Debian hosts, the scripts in `tools/` can create a shutdown-only account and 
 
 - The remote computer runs an SSH server that allows key sign-in.
 - The bridge runs `shutdown -h now`, or `sudo -n shutdown -h now` when the device has **Use sudo -n** ticked. A host that needs a different command can set it with `command=` (step 3).
-- Run the commands marked "on the bridge" on the Pi, as an administrator.
+- Run the commands marked "on the bridge" on the Linux host running the bridge, as an administrator.
 
 ## Words used below
 
