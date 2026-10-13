@@ -4,6 +4,35 @@ APC UPS Bridge runs as one unprivileged process on a **systemd-based Linux host*
 
 Test the installation, USB communication and any remote power actions on your own hardware before relying on them.
 
+## Linux distribution support
+
+The application runs on **systemd-based Linux**, not just single-board computers. The table reflects compatibility expected from the current source and installer; **it does not mean every combination has been installed and tested on real hardware**.
+
+| Linux distribution | Main application | Automatic Fail2ban |
+| --- | --- | --- |
+| Ubuntu 22.04 / 24.04 / 26.04 LTS | ✅ | ✅ |
+| Debian 12 / 13 | ✅ | ✅ |
+| Raspberry Pi OS | ✅ | ✅ |
+| Linux Mint | ✅ | ✅ |
+| Fedora Server / Workstation | ✅ Expected, **not tested** | ❌ Manual — **MUST skip in installer** |
+| openSUSE Tumbleweed | ✅ Expected, **not tested** | ❌ Manual — **MUST skip in installer** |
+
+**Fedora and openSUSE users MUST pass `--skip-fail2ban` on every installation or update.** The installer supports `dnf` and `zypper` for `apcupsd` but the automatic Fail2ban configuration is Debian/Ubuntu-specific. The built-in login limit works regardless of Fail2ban.
+
+From a checkout:
+
+```bash
+sudo bash scripts/install.sh --skip-fail2ban
+```
+
+Or when installing or updating using the downloaded script:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fructus-sum/APC-UPS-Bridge/main/scripts/install.sh | sudo bash -s -- --skip-fail2ban
+```
+
+These expected-compatible distributions still need real installer, USB, systemd and shutdown-permission testing before being described as verified. Automatic Fail2ban setup is unchanged for Debian, Ubuntu and their listed derivatives.
+
 ## Install
 
 One command:
@@ -28,15 +57,15 @@ To read the script first, download `scripts/install.sh`, review it and run `sudo
 4. Builds the bridge and the host helper (see step 7) with `CGO_ENABLED=0` in a scratch directory under `/var/tmp`. Build time depends on CPU and storage speed, and a download plus build may need a few hundred MB of free disk. The scratch directory, including any downloaded Go, is deleted when the installer exits.
 5. Installs `apcupsd` with apt, dnf or zypper if `apcaccess` is missing. On that fresh install it also configures apcupsd for a USB UPS (see [apcupsd setup](#apcupsd-setup)) and checks that `apcaccess status` answers.
 6. Creates the `apc-ups-bridge` service user, installs the binary to `/usr/local/bin/apc-ups-bridge`, writes the hardened systemd unit, enables it at boot and starts it.
-7. Installs the host helper `/usr/local/libexec/apc-ups-bridge-host-helper` and enables its socket unit `apc-ups-bridge-host-settings.socket`. The helper lets the Settings page change the Pi's shutdown thresholds (see [Pi self-protection](#linux-host--raspberry-pi-self-protection)). If the helper cannot be installed, the bridge still runs and the installer warns; rerun the installer to retry.
+7. Installs the host helper `/usr/local/libexec/apc-ups-bridge-host-helper` and enables its socket unit `apc-ups-bridge-host-settings.socket`. The helper lets the Settings page change the local Linux host's shutdown thresholds (see [Local host self-protection](#local-linux-host-self-protection)). If the helper cannot be installed, the bridge still runs and the installer warns; rerun the installer to retry.
 8. Debian/Ubuntu: sets up a Fail2ban jail for repeated failed web logins (skip with `--skip-fail2ban`).
 9. Installs the uninstaller as `/usr/local/sbin/apc-ups-bridge-uninstall`, then prints the URL(s), for example `Open http://192.168.1.20:8080/`.
 
-Supported CPUs are x86-64, 64-bit ARM and 32-bit ARM (a 32-bit Raspberry Pi OS is detected even on a 64-bit kernel). Other architectures stop with an error before building. The Go download needs a working internet connection; with a recent Go already installed, only the source download is needed (none at all when run from a checkout).
+Supported CPUs are x86-64, 64-bit ARM and 32-bit ARM (including 32-bit userspace on a 64-bit ARM kernel). Other architectures stop with an error before building. The Go download needs a working internet connection; with a recent Go already installed, only the source download is needed (none at all when run from a checkout).
 
 ### Fail2ban
 
-On Debian and Ubuntu, installing or updating configures a Fail2ban jail specific to APC UPS Bridge. Other Fail2ban jails are preserved. If the setup fails, the installer warns and undoes its own changes so other jails keep working; check and retry as described in [Login security](LOGIN-SECURITY.md), which also covers the ban policy and the **Login security** page. Skipping with `--skip-fail2ban` does not remove a jail that is already set up. On other distributions the built-in login limit still applies, but Fail2ban needs manual setup.
+On Debian/Ubuntu-based distributions, installing or updating configures a Fail2ban jail specific to APC UPS Bridge. Other Fail2ban jails are preserved. If the setup fails, the installer warns and undoes its own changes so other jails keep working; check and retry as described in [Login security](LOGIN-SECURITY.md), which also covers the ban policy and the **Login security** page. Skipping with `--skip-fail2ban` does not remove a jail that is already set up. On Fedora and openSUSE, **use `--skip-fail2ban` for installations and updates**, and set up Fail2ban manually if wanted. On other distributions without automatic Fail2ban support, the built-in login limit still applies.
 
 ### Network access
 
@@ -78,9 +107,9 @@ The password is only requested on the first install. On later runs `--password-s
 
 Backups are written next to the originals as `.backup-YYYYMMDDTHHMMSSZ-N`. `BATTERYLEVEL`, `MINUTES` and `TIMEOUT` are retained unless `--host-protection` is given.
 
-## Linux host / Raspberry Pi self-protection
+## Local Linux host self-protection
 
-APC UPS Bridge does not run a second local shutdown controller. The Pi's own shutdown is handled by native `apcupsd`, so UPS power-off timing and events are handled in one place. An existing apcupsd shutdown configuration is preserved by default, and a default or earlier `apcupsd` setup may already have local shutdown rules active.
+APC UPS Bridge does not run a second local shutdown controller. The local Linux host's shutdown is handled by native `apcupsd`, so UPS power-off timing and events are handled in one place. An existing apcupsd shutdown configuration is preserved by default, and a default or earlier `apcupsd` setup may already have local shutdown rules active.
 
 To have the installer set the **local host** thresholds at **10% battery OR 3 minutes estimated runtime**, use:
 
@@ -88,7 +117,7 @@ To have the installer set the **local host** thresholds at **10% battery OR 3 mi
 sudo bash scripts/install.sh --configure-apcupsd --host-protection
 ```
 
-This backs up the config, sets `BATTERYLEVEL 10`, `MINUTES 3` and `TIMEOUT 0`, then restarts apcupsd. These are active shutdown thresholds and could stop the Pi during an outage. Choose values suitable for your UPS and leave enough time for configured remote SSH shutdowns to finish. Inspect `/etc/apcupsd/apcupsd.conf` before relying on it.
+This backs up the config, sets `BATTERYLEVEL 10`, `MINUTES 3` and `TIMEOUT 0`, then restarts apcupsd. These are active shutdown thresholds and could stop the local host during an outage. Choose values suitable for your UPS and leave enough time for configured remote SSH shutdowns to finish. Inspect `/etc/apcupsd/apcupsd.conf` before relying on it.
 
 To change the thresholds afterwards, use the **Settings** page (battery percentage, remaining runtime and on-battery timer). Changes go through the host helper, are refused unless the UPS reports ONLINE mains, and back up `apcupsd.conf` before restarting `apcupsd`. A failed change leaves the settings unchanged (or is rolled back after a restart failure). Choosing the existing-configuration mode stops web management but does not restore earlier values.
 
@@ -139,7 +168,7 @@ The installer also leaves a local copy: `sudo apc-ups-bridge-uninstall` or `sudo
 
 What remains:
 
-- `apcupsd`, its configuration, its `.backup-*` copies and any Pi shutdown thresholds set through the installer or the Settings page.
+- `apcupsd`, its configuration, its `.backup-*` copies and any local host shutdown thresholds set through the installer or the Settings page.
 - The Fail2ban jail and the `/var/log/apc-ups-bridge-fail2ban` log.
 - Without `--purge`, the credentials, settings, state and logs. `--purge` deletes `/etc/apc-ups-bridge`, `/var/lib/apc-ups-bridge`, `/var/log/apc-ups-bridge` and the service user.
 
