@@ -1,6 +1,6 @@
 # Remote power protection
 
-APC UPS Bridge can shut down other computers over SSH when the power fails, and can optionally wake them with Wake-on-LAN when power is back. It is **off by default**, and each device has its own shutdown and wake permission. The Raspberry Pi itself is shut down by `apcupsd`, not by this feature.
+APC UPS Bridge can shut down other computers over SSH when the power fails, and can optionally wake them with Wake-on-LAN when power is back. It is **off by default**, and each device has its own shutdown and wake permission. The local Linux host itself is shut down by `apcupsd`, not by this feature.
 
 For a first-time setup, see [Install](INSTALL.md). For the SSH key, see the [SSH key guide](SSH-KEYS.md). For battery self-tests, see [Battery health and maintenance](BATTERY.md).
 
@@ -15,11 +15,11 @@ Open **Power rules & devices**. You can add up to 16 devices. Each needs a **Dev
 
 Save a device and select **Test SSH (no shutdown)**. The test checks the saved device with the bridge's key and takes up to about 8 seconds. It confirms that the key login works. It does not check that the account may shut the machine down, and it never sends a shutdown. Try the real shutdown once on equipment where an outage is acceptable.
 
-The bridge only runs `shutdown -h now` (with `sudo -n` in front if ticked). It never uses SSH passwords or commands typed in the browser, and it needs an `ssh` program on the Pi.
+The bridge only runs `shutdown -h now` (with `sudo -n` in front if ticked). It never uses SSH passwords or commands typed in the browser, and it needs an `ssh` program on the bridge host.
 
 ## Rules and their limits
 
-These apply to the remote devices, not the Pi.
+These apply to the remote devices, not the Linux host running the bridge.
 
 | Setting | Allowed | Default |
 | --- | --- | --- |
@@ -33,7 +33,7 @@ Turn on **Enable automatic remote protection (opt-in)** only when at least one d
 
 ## What happens in an outage
 
-- The bridge must first see the UPS online while protection is on. If the Pi starts while already on battery, it does not send shutdowns.
+- The bridge must first see the UPS online while protection is on. If the bridge host starts while already on battery, it does not send shutdowns.
 - Once the UPS has been on battery for the confirmation time, shutdowns start when the battery is at or below your limit, the runtime is at or below your limit, or the UPS reports low battery. A reading the UPS does not report is never treated as zero.
 - Devices shut down in priority order. Devices with the same priority go at the same time, and the next group starts when the previous group's commands finish.
 - A device gets up to 5 shutdown attempts, at least 30 seconds apart. Restarting the bridge does not reset the count.
@@ -60,28 +60,28 @@ Each device has an **Online check** setting:
 
 An online device shows as offline after two missed checks in a row. The label reads "Offline since HH:MM", followed by the reason when there is one. A device that is not saved yet shows **Save to start checking**. After you save, a quick extra check runs shortly afterwards.
 
-Devices that block ping show as offline, so choose **SSH port** or **Off** for them. If ping is not allowed for the service on the Pi, the device shows as unavailable; choose **SSH port** or see the administrator notes. Fail2ban normally ignores connect-only checks, so prefer **Ping**.
+Devices that block ping show as offline, so choose **SSH port** or **Off** for them. If ping is not allowed for the service on the bridge host, the device shows as unavailable; choose **SSH port** or see the administrator notes. Fail2ban normally ignores connect-only checks, so prefer **Ping**.
 
 Saved devices are collapsed on the Power page, showing the name, status and **Remove**. Open one to edit it. New devices start open, and if a save is refused all devices open so you can fix them.
 
-## Shutting down the Pi itself
+## Shutting down the local Linux host
 
-The Pi is shut down by `apcupsd`, using the values in `/etc/apcupsd/apcupsd.conf`. The Power page shows them. On the **Settings** page, under **Raspberry Pi shutdown thresholds (apcupsd)**, you can either keep your existing settings or manage them from the page:
+The local Linux host is shut down by `apcupsd`, using the values in `/etc/apcupsd/apcupsd.conf`. The Power page shows them. On the **Settings** page, under **Local host shutdown thresholds (apcupsd)**, you can either keep your existing settings or manage them from the page:
 
 | Setting | Allowed | Page default |
 | --- | --- | --- |
-| Pi shutdown battery percentage (%) | 5 to 95 | 10 |
-| Pi remaining runtime (minutes) | 0 to 120 (0 turns it off) | 3 |
+| Host shutdown battery percentage (%) | 5 to 95 | 10 |
+| Host remaining runtime (minutes) | 0 to 120 (0 turns it off) | 3 |
 | Shut down after this many minutes on battery | 0 to 120 (0 turns it off) | 10 |
 
 `apcupsd` acts on whichever limit is reached first, and also when the UPS reports low battery. Charge and runtime estimates become unreliable as batteries age, so a timer of about 10 minutes is a good start; test it with a real power cut. Applying changes backs up the old file and restarts `apcupsd`, and only works while the UPS is online. Switching back to existing settings does not undo values already applied.
 
-These Pi limits are separate from the remote device limits above (which default to 20% battery). The low battery warning in Settings only records an event and shuts nothing down. The installer's optional `--host-protection` preset is 10% battery or 3 minutes.
+These local host limits are separate from the remote device limits above (which default to 20% battery). The low battery warning in Settings only records an event and shuts nothing down. The installer's optional `--host-protection` preset is 10% battery or 3 minutes.
 
 ## For administrators
 
 - Power rules are in `/etc/apc-ups-bridge/power.json`. Progress is in `/var/lib/apc-ups-bridge/power-state.json`. Keep both through upgrades. A damaged state file stops actions rather than guessing what was already done.
 - SSH is run with `BatchMode=yes` and `StrictHostKeyChecking=yes` as the `apc-ups-bridge` user, so each destination must be in that user's `known_hosts`.
 - Ping needs the service's group inside `net.ipv4.ping_group_range`. Check it with `sysctl net.ipv4.ping_group_range`. Current Debian and Raspberry Pi OS usually allow all groups. Status is kept in memory only and is lost on restart.
-- Pi thresholds are applied by a small root-owned helper that listens on a systemd socket. The web service runs without login rights. The helper accepts requests from any process running as the service user, so a compromised web service could set a Pi threshold anywhere in the ranges above and cause an early Pi shutdown. It cannot change other `apcupsd` settings or run other commands. Its restart of `apcupsd` is limited to 20 seconds. If the page reports no response, the result is unknown, so refresh and check the current values.
+- Local host thresholds are applied by a small root-owned helper that listens on a systemd socket. The web service runs without login rights. The helper accepts requests from any process running as the service user, so a compromised web service could set a Pi threshold anywhere in the ranges above and cause an early local host shutdown. It cannot change other `apcupsd` settings or run other commands. Its restart of `apcupsd` is limited to 20 seconds. If the page reports no response, the result is unknown, so refresh and check the current values.
 - Every action is saved before it runs. A wake packet is never repeated in the same outage.
