@@ -36,7 +36,7 @@ In **Power rules & devices**, enter the SSH account and port you configured. The
 - The SSH public key is stored in a root-owned authorized-keys file (mode 0644, so sshd can read it as the account) in a root-owned directory on Debian. The account cannot modify it.
 - Enrollment is one-time. Re-enrollment/key rotation requires action by a Debian administrator.
 - Keep the bridge host's private key private. A compromised key could still shut down the Debian host.
-- If the password-disable step completes but the Pi's test fails, recover using the Debian console or an independent administrator login. Review `journalctl -u ssh` and `/etc/ssh/sshd_config`; the Debian script makes timestamped backups.
+- If the password-disable step completes but the bridge host's test fails, recover using the Debian console or an independent administrator login. Review `journalctl -u ssh` and `/etc/ssh/sshd_config`; the Debian script makes timestamped backups.
 - To revoke access, remove the user's root-owned key file under `/etc/ssh/apc-ups-bridge/authorized_keys/` on Debian, or remove the account entirely (below).
 
 ## Remove the account
