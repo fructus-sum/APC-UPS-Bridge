@@ -15,7 +15,7 @@ The page shows the current state (Enabled or Disabled) and the status of the rec
 
 ## What you will receive
 
-- **Power outage:** one email when the bridge first sees the UPS switch to battery. If the Pi starts up while already on battery, the email says the true start time is unknown.
+- **Power outage:** one email when the bridge first sees the UPS switch to battery. If the Linux host starts up while already on battery, the email says the true start time is unknown.
 - **Power restored:** one email when mains returns, for outages whose start email was attempted.
 - **Final recovery report:** one email once everything has recovered (see below). It lists every interruption, the lowest battery level, service restarts, gaps in monitoring, the protected devices by name and recent power events. It leaves out addresses and ports.
 - **Login security warning:** one email when a fifth failed sign-in within 10 minutes comes from the same address. At most one is sent per hour, and it contains no addresses. See [Login security](LOGIN-SECURITY.md).
@@ -24,7 +24,7 @@ Outage and restored emails are tried once and are not retried, so a lost interne
 
 ## When the final report is sent
 
-The bridge keeps one report open for the whole outage, including repeated power loss and Pi restarts. It sends the report only when all of these are true:
+The bridge keeps one report open for the whole outage, including repeated power loss and bridge host restarts. It sends the report only when all of these are true:
 
 - the UPS is back on mains power;
 - the UPS reports **100%** battery charge;
@@ -40,7 +40,7 @@ Things to know:
 - The report is checked at most every 2 minutes, and nothing is sent while the UPS is on battery.
 - Mail systems cannot promise a message arrives exactly once, so after an unlucky restart the final report may arrive twice.
 
-If the Pi was switched off for a long time, some outages are never seen. Reports separate what was observed from what is estimated, and never invent an outage length for time the Pi was off.
+If the bridge host was switched off for a long time, some outages are never seen. Reports separate what was observed from what is estimated, and never invent an outage length for time the bridge host was off.
 
 ## For administrators
 
