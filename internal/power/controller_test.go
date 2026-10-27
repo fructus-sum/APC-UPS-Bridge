@@ -84,7 +84,7 @@ func sample(power apc.PowerState, battery float64) monitor.Status {
 }
 func badSample() monitor.Status { return monitor.Status{Healthy: false} }
 func testDevice() Device {
-	return Device{ID: "node-1", Name: "Node one", Host: "10.20.30.11", SSHUser: "root", SSHPort: 22, MAC: "00:d0:b4:02:4c:70", WakeAddress: "192.168.1.255", WakePort: 9, ShutdownEnabled: true, WakeEnabled: true}
+	return Device{ID: "node-1", Name: "Node one", Host: "192.0.2.11", SSHUser: "root", SSHPort: 22, MAC: "00:d0:b4:02:4c:70", WakeAddress: "192.168.1.255", WakePort: 9, ShutdownEnabled: true, WakeEnabled: true}
 }
 func configured(t *testing.T) (*Store, string) {
 	t.Helper()
@@ -347,12 +347,12 @@ func TestPriorityAndRuntimeFallback(t *testing.T) {
 	first.ID = "low-priority"
 	first.Name = "Third server"
 	first.Priority = 90
-	first.Host = "10.20.30.13"
+	first.Host = "192.0.2.13"
 	second := testDevice()
 	second.ID = "high-priority"
 	second.Name = "First server"
 	second.Priority = 2
-	second.Host = "10.20.30.12"
+	second.Host = "192.0.2.12"
 	cfg.Devices = []Device{first, second}
 	cfg.ShutdownRuntimeMinutes = 4
 	if err := store.Save(cfg); err != nil {
@@ -805,7 +805,7 @@ func waitErr(t *testing.T, ch <-chan error) error {
 
 func TestSamePriorityShutdownsRunConcurrently(t *testing.T) {
 	store, path := configured(t)
-	setDevices(t, store, deviceWith("a", 5, "10.20.30.21"), deviceWith("b", 5, "10.20.30.22"))
+	setDevices(t, store, deviceWith("a", 5, "192.0.2.21"), deviceWith("b", 5, "192.0.2.22"))
 	w := &memoryWriter{}
 	f := &fakeExecutor{}
 	now := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
@@ -841,7 +841,7 @@ func TestSamePriorityShutdownsRunConcurrently(t *testing.T) {
 
 func TestLowerPriorityWaitsForHigherPriorityGroup(t *testing.T) {
 	store, path := configured(t)
-	setDevices(t, store, deviceWith("hi-a", 1, "10.20.30.21"), deviceWith("hi-b", 1, "10.20.30.22"), deviceWith("lo", 9, "10.20.30.23"))
+	setDevices(t, store, deviceWith("hi-a", 1, "192.0.2.21"), deviceWith("hi-b", 1, "192.0.2.22"), deviceWith("lo", 9, "192.0.2.23"))
 	w := &memoryWriter{}
 	f := &fakeExecutor{}
 	now := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)

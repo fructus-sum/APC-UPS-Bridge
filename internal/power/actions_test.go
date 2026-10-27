@@ -45,18 +45,18 @@ func TestSSHShutdownDroppedClassification(t *testing.T) {
 		output string
 		want   bool
 	}{
-		{"closed by remote host", 255, "Connection to 10.20.30.11 closed by remote host.\n", true},
+		{"closed by remote host", 255, "Connection to 192.0.2.11 closed by remote host.\n", true},
 		{"crlf line ending", 255, "Connection to node-1.lan closed by remote host.\r\n", true},
-		{"after warning line", 255, "Warning: Permanently added host\nConnection to 10.20.30.11 closed by remote host.\n", true},
-		{"no trailing newline", 255, "Connection to 10.20.30.11 closed by remote host.", true},
+		{"after warning line", 255, "Warning: Permanently added host\nConnection to 192.0.2.11 closed by remote host.\n", true},
+		{"no trailing newline", 255, "Connection to 192.0.2.11 closed by remote host.", true},
 		{"pre-auth kex drop", 255, "kex_exchange_identification: Connection closed by remote host\n", false},
 		{"pre-auth kex drop with banner", 255, "kex_exchange_identification: read: Connection reset by peer\nConnection closed by 10.0.0.5 port 22\n", false},
 		{"pre-auth close by address", 255, "Connection closed by 10.0.0.5 port 22\n", false},
-		{"unanchored text", 255, "ssh: Connection to 10.20.30.11 closed by remote host.\n", false},
+		{"unanchored text", 255, "ssh: Connection to 192.0.2.11 closed by remote host.\n", false},
 		{"mixed case", 255, "CONNECTION CLOSED BY REMOTE HOST", false},
-		{"other ssh failure", 255, "ssh: connect to host 10.20.30.11 port 22: Connection refused\n", false},
-		{"permission denied", 255, "root@10.20.30.11: Permission denied (publickey).\n", false},
-		{"wrong exit code", 1, "Connection to 10.20.30.11 closed by remote host.\n", false},
+		{"other ssh failure", 255, "ssh: connect to host 192.0.2.11 port 22: Connection refused\n", false},
+		{"permission denied", 255, "root@192.0.2.11: Permission denied (publickey).\n", false},
+		{"wrong exit code", 1, "Connection to 192.0.2.11 closed by remote host.\n", false},
 		{"no exit code", -1, "closed by remote host", false},
 		{"empty output", 255, "", false},
 	}
